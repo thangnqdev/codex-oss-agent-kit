@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "program": "Codex for Open Source",
+  "rules": {
+    "enforceStrictTypes": true,
+    "requireCoverageFloor": 80,
+    "securityAuditOnPR": true,
+    "autoTriageIssues": true
+  },
+  "reviewSettings": {
+    "model": "gpt-4o",
+    "maxDiffLines": 1000,
+    "commentOnPass": false
+  }
+}

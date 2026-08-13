@@ -1,0 +1,22 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Environment & Secrets
+.env
+.env.local
+*.pem
+
+# IDE & System
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

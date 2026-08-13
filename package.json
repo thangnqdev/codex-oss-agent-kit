@@ -1,0 +1,41 @@
+{
+  "name": "codex-oss-agent-kit",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "An AI-powered open-source maintainer toolkit & GitHub Action engine built for OpenAI Codex for OSS compliance.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "codex-oss": "./bin/codex-oss.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node bin/codex-oss.js"
+  },
+  "keywords": [
+    "openai",
+    "codex",
+    "open-source",
+    "oss",
+    "github-action",
+    "pr-review",
+    "issue-triage",
+    "security-audit",
+    "ai-agent"
+  ],
+  "author": "thangnqdev",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "typescript": "^5.5.2",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
