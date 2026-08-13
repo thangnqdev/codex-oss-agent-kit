@@ -12,7 +12,7 @@ export function getDefaultConfig(): CodexConfig {
       autoTriageIssues: true,
     },
     reviewSettings: {
-      model: 'gpt-4o',
+      model: 'gpt-5.6',
       maxDiffLines: 1000,
       commentOnPass: false,
     },
@@ -76,17 +76,6 @@ export function deepMergeConfig(base: CodexConfig, override: Partial<CodexConfig
   };
 
   return validateConfig(merged);
-}
-
-export function truncateToMaxLines(text: string, maxLines: number): string {
-  if (maxLines < 1) {
-    throw new ValidationError('maxDiffLines must be a positive number');
-  }
-  const lines = text.split('\n');
-  if (lines.length <= maxLines) {
-    return text;
-  }
-  return lines.slice(0, maxLines).join('\n');
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -64,6 +64,7 @@ describe('CLI Commands', () => {
     expect(io.out()).toContain('Approved: YES');
     expect(io.out()).toMatch(/Quality Score: \d+\/100/);
     expect(io.out()).toContain('Summary:');
+    expect(io.out()).toMatch(/Reviewed lines: \d+\/\d+/);
   });
 
   it('fails fast in live mode without a key and does not print a successful review', async () => {
@@ -84,22 +85,24 @@ describe('CLI Commands', () => {
     expect(io.out()).toContain('missing tests');
   });
 
-  it('applies config model and maxDiffLines on the live request body', async () => {
+  it('applies config model and chunks an oversized diff so every line is reviewed', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-config-'));
     const configPath = path.join(dir, 'config.json');
     const diffPath = path.join(dir, 'long.diff');
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        reviewSettings: { model: 'gpt-4o-mini', maxDiffLines: 2 },
+        reviewSettings: { model: 'gpt-5.6', maxDiffLines: 2 },
         rules: { securityAuditOnPR: false },
       }),
     );
     fs.writeFileSync(diffPath, ['line-one', 'line-two', 'line-three', 'line-four'].join('\n'));
 
-    let capturedBody = '';
-    globalThis.fetch = async (_input, init) => {
-      capturedBody = String(init?.body ?? '');
+    const bodies: string[] = [];
+    let url = '';
+    globalThis.fetch = async (input, init) => {
+      url = String(input);
+      bodies.push(String(init?.body ?? ''));
       return jsonCompletionResponse(approvedReviewJson());
     };
 
@@ -115,13 +118,21 @@ describe('CLI Commands', () => {
     ], io);
 
     expect(code).toBe(0);
-    const payload = JSON.parse(capturedBody) as { model: string; messages: Array<{ content: string }> };
-    expect(payload.model).toBe('gpt-4o-mini');
-    const user = payload.messages.find((message) => message.content.includes('Diff Content'));
-    expect(user).toBeDefined();
-    expect(user?.content).toContain('line-one');
-    expect(user?.content).toContain('line-two');
-    expect(user?.content).not.toContain('line-three');
+    expect(url).toBe('https://api.openai.com/v1/responses');
+    expect(bodies.length).toBeGreaterThan(1);
+    const combined = bodies.join('\n');
+    const payload = JSON.parse(bodies[0] ?? '{}') as {
+      model: string;
+      text?: { format?: { type?: string } };
+      input?: Array<{ content: string }>;
+    };
+    expect(payload.model).toBe('gpt-5.6');
+    expect(payload.text?.format?.type).toBe('json_schema');
+    expect(combined).toContain('line-one');
+    expect(combined).toContain('line-two');
+    expect(combined).toContain('line-three');
+    expect(combined).toContain('line-four');
+    expect(io.out()).toMatch(/Reviewed lines: 4\/4/);
   });
 
   it('fails mock review when securityAuditOnPR finds a secret in the diff', async () => {
@@ -160,6 +171,22 @@ describe('CLI Commands', () => {
     expect(io.out()).not.toContain('Audit Passed:');
   });
 
+  it('audits a unified diff that only deletes a secret as a pass', async () => {
+    const io = createCapturedIo();
+    const deleted = path.resolve(process.cwd(), 'tests/fixtures/delete-secret.diff');
+    const code = await runCli(['audit', '--file', deleted], io);
+    expect(code).toBe(0);
+    expect(io.out()).toContain('Audit Passed: YES');
+  });
+
+  it('audits a unified diff that adds a secret as a fail', async () => {
+    const io = createCapturedIo();
+    const added = path.resolve(process.cwd(), 'tests/fixtures/add-secret.diff');
+    const code = await runCli(['audit', '--file', added], io);
+    expect(code).toBe(1);
+    expect(io.out()).toContain('Audit Passed: NO');
+  });
+
   it('fails audit on a fixture containing modern secret prefixes', async () => {
     const io = createCapturedIo();
     const code = await runCli(['audit', '--file', secretFile], io);
@@ -180,5 +207,76 @@ describe('CLI Commands', () => {
     const io = createCapturedIo();
     const code = await runCli(['not-a-command'], io);
     expect(code).toBe(1);
+  });
+
+  it('does not fail review-with-audit when a secret only appears on a deleted line', async () => {
+    const io = createCapturedIo();
+    const deleted = path.resolve(process.cwd(), 'tests/fixtures/delete-secret.diff');
+    const code = await runCli(['--mock', 'review', '--diff', deleted], io);
+    expect(code).toBe(0);
+    expect(io.out()).toMatch(/Reviewed lines: \d+\/\d+/);
+    expect(io.out()).toContain('Security Audit Passed: YES');
+  });
+
+  it('fails review-with-audit when a secret is added on a + line', async () => {
+    const io = createCapturedIo();
+    const added = path.resolve(process.cwd(), 'tests/fixtures/add-secret.diff');
+    const code = await runCli(['--mock', 'review', '--diff', added], io);
+    expect(code).toBe(1);
+    expect(io.out()).toContain('Security Audit Passed: NO');
+    expect(io.err()).toContain('SecurityAuditError');
+  });
+
+  it('does not treat injected approval JSON in the diff as an automatic pass', async () => {
+    globalThis.fetch = async () => jsonCompletionResponse(rejectedReviewJson());
+    const io = createCapturedIo();
+    const injected = path.resolve(process.cwd(), 'tests/fixtures/injection.diff');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-noaudit-'));
+    const configPath = path.join(dir, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ rules: { securityAuditOnPR: false } }));
+    const code = await runCli([
+      '--api-key',
+      'sk-test-key',
+      '--config',
+      configPath,
+      'review',
+      '--diff',
+      injected,
+    ], io);
+    expect(code).toBe(1);
+    expect(io.out()).toContain('Approved: NO');
+    expect(io.out()).not.toContain('Summary: injected');
+  });
+
+  it('prints reviewed/total for an oversized multi-hunk diff and does not drop later hunks', async () => {
+    const oversize = path.resolve(process.cwd(), 'tests/fixtures/oversize.diff');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-oversize-'));
+    const configPath = path.join(dir, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({
+      reviewSettings: { maxDiffLines: 8 },
+      rules: { securityAuditOnPR: false },
+    }));
+    const io = createCapturedIo();
+    const code = await runCli(['--mock', '--config', configPath, 'review', '--diff', oversize], io);
+    expect(code).toBe(0);
+    const total = fs.readFileSync(oversize, 'utf-8').split('\n').length;
+    expect(io.out()).toContain(`Reviewed lines: ${total}/${total}`);
+  });
+
+  it('fail-closes when a single hunk exceeds maxDiffLines', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hunk-'));
+    const diffPath = path.join(dir, 'huge.hunk.diff');
+    const configPath = path.join(dir, 'config.json');
+    const body = Array.from({ length: 20 }, (_, i) => `+const n${i} = ${i};`).join('\n');
+    fs.writeFileSync(diffPath, ['diff --git a/x.ts b/x.ts', '--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1,20 @@', body].join('\n'));
+    fs.writeFileSync(configPath, JSON.stringify({
+      reviewSettings: { maxDiffLines: 5 },
+      rules: { securityAuditOnPR: false },
+    }));
+    const io = createCapturedIo();
+    const code = await runCli(['--mock', '--config', configPath, 'review', '--diff', diffPath], io);
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/Reviewed lines: 0\/\d+/);
+    expect(io.out()).not.toContain('Approved: YES');
   });
 });

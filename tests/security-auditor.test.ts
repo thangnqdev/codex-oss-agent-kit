@@ -70,4 +70,30 @@ describe('SecurityAuditor', () => {
     const result = auditor.auditOrThrow('const ok = true;');
     expect(result.passed).toBe(true);
   });
+
+  it('ignores secrets that only appear on deleted unified-diff lines', () => {
+    const auditor = new SecurityAuditor();
+    const deleted = [
+      'diff --git a/app.ts b/app.ts',
+      '--- a/app.ts',
+      '+++ b/app.ts',
+      '@@ -1,2 +1,1 @@',
+      '-const leaked = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";',
+      ' export const value = 1;',
+    ].join('\n');
+    expect(auditor.auditContent(deleted).passed).toBe(true);
+  });
+
+  it('fails when the same secret is on an added unified-diff line', () => {
+    const auditor = new SecurityAuditor();
+    const added = [
+      'diff --git a/app.ts b/app.ts',
+      '--- a/app.ts',
+      '+++ b/app.ts',
+      '@@ -1,1 +1,2 @@',
+      ' export const value = 1;',
+      '+const leaked = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";',
+    ].join('\n');
+    expect(auditor.auditContent(added).passed).toBe(false);
+  });
 });

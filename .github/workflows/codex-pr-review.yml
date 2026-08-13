@@ -1,4 +1,4 @@
-name: Codex PR Review & AGENTS.md Audit
+name: Codex PR Review
 
 on:
   pull_request:
@@ -12,25 +12,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Run drop-in PR review Action
+        uses: ./
         with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build CLI
-        run: npm run build
-
-      - name: Run Codex Pull Request Review
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
-          if [ -n "${OPENAI_API_KEY}" ]; then
-            node bin/codex-oss.js review --diff pr.diff --agents AGENTS.md
-          else
-            echo "OPENAI_API_KEY is not set; running mock review as a local quality gate."
-            node bin/codex-oss.js --mock review --diff pr.diff --agents AGENTS.md
-          fi
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          agents-file: AGENTS.md
+          max-diff-size: '1000'

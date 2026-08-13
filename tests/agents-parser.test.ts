@@ -12,13 +12,17 @@ describe('AgentsParser', () => {
     expect(rules[0]).toContain('Default AGENTS.md rules');
   });
 
-  it('parses bullet points from valid AGENTS.md file', () => {
+  it('loads the full AGENTS.md including numbered quality-gate rules', () => {
     const agentsPath = path.resolve(process.cwd(), 'AGENTS.md');
-    const rules = AgentsParser.parseAgentsFile(agentsPath);
-    expect(rules.length).toBeGreaterThan(0);
+    const text = AgentsParser.loadAgentsText(agentsPath);
+    expect(text).toContain('Never import CLI modules inside core or types.');
+    expect(text).toContain('npm run type-check');
+    expect(text).toContain('>=80% coverage');
+    const asList = AgentsParser.parseAgentsFile(agentsPath);
+    expect(asList.join('\n')).toContain('Never import CLI modules inside core or types.');
   });
 
-  it('returns the full file when no bullets are present', () => {
+  it('returns the full file contents without dropping prose', () => {
     const filePath = path.join(os.tmpdir(), `codex-agents-${Date.now()}.md`);
     fs.writeFileSync(filePath, 'No bullets in this file.');
     const rules = AgentsParser.parseAgentsFile(filePath);

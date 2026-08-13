@@ -1,6 +1,8 @@
 import { CodexClient } from './codex-client.js';
 import { PRReviewResult } from '../types/index.js';
+import { buildReviewPrompt } from './review-prompt.js';
 import { parsePRReviewResult } from './result-schemas.js';
+import { PR_REVIEW_JSON_SCHEMA } from './review-request.js';
 
 export class PRAnalyzer {
   private readonly client: CodexClient;
@@ -9,7 +11,7 @@ export class PRAnalyzer {
     this.client = client;
   }
 
-  public async analyzeDiff(diffContent: string, agentRules: string[] = []): Promise<PRReviewResult> {
+  public async analyzeDiff(diffContent: string, agentsText: string = ''): Promise<PRReviewResult> {
     if (!diffContent || diffContent.trim().length === 0) {
       return {
         approved: true,
@@ -20,14 +22,12 @@ export class PRAnalyzer {
       };
     }
 
-    const rulesContext = agentRules.length > 0
-      ? `Repository AGENTS.md rules:\n${agentRules.map((rule) => `- ${rule}`).join('\n')}`
-      : 'Standard clean architecture and type safety rules apply.';
-
-    const systemPrompt = 'You are an automated pull request reviewer for OpenAI Codex for OSS compliance. Evaluate the diff against repository rules and return JSON formatted as PRReviewResult.';
-    const userPrompt = `${rulesContext}\n\nDiff Content:\n\`\`\`diff\n${diffContent}\n\`\`\``;
-
-    const rawResponse = await this.client.generateCompletion(userPrompt, systemPrompt);
+    const prompt = buildReviewPrompt(agentsText, diffContent);
+    const rawResponse = await this.client.generateCompletion(
+      prompt.userPrompt,
+      prompt.systemPrompt,
+      PR_REVIEW_JSON_SCHEMA,
+    );
     return parsePRReviewResult(rawResponse);
   }
 }

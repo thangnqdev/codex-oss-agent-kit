@@ -41,7 +41,7 @@ describe('public contracts', () => {
     expect(workflow).not.toMatch(/audit --file src\/index\.ts\s*$/m);
   });
 
-  it('README and SECURITY do not claim unimplemented capabilities', () => {
+  it('README and SECURITY do not claim unimplemented capabilities or official compliance', () => {
     const readme = fs.readFileSync(path.resolve('README.md'), 'utf-8');
     const security = fs.readFileSync(path.resolve('SECURITY.md'), 'utf-8');
 
@@ -50,7 +50,36 @@ describe('public contracts', () => {
     expect(readme).not.toMatch(/constructive line-by-line/i);
     expect(readme).not.toMatch(/OWASP top 10 risks/i);
     expect(readme).not.toMatch(/zero lint errors/i);
+    expect(readme).not.toMatch(/Compliance Matrix/i);
+    expect(readme).not.toMatch(/compliant with OpenAI Codex for OSS criteria/i);
+    expect(readme).toMatch(/Repository readiness \/ quality checklist for Codex workflows/i);
     expect(security).not.toMatch(/All PRs are audited for credential leaks, dependency vulnerabilities/i);
     expect(readme).toMatch(/80%/);
+  });
+
+  it('exposes a drop-in Action with the required inputs and outputs', () => {
+    const action = fs.readFileSync(path.resolve('action.yml'), 'utf-8');
+    expect(action).toMatch(/openai-api-key:/);
+    expect(action).toMatch(/model:/);
+    expect(action).toMatch(/agents-file:/);
+    expect(action).toMatch(/max-diff-size:/);
+    expect(action).toMatch(/approved:/);
+    expect(action).toMatch(/score:/);
+    expect(action).toMatch(/findings:/);
+
+    const workflow = fs.readFileSync(path.resolve('.github/workflows/codex-pr-review.yml'), 'utf-8');
+    expect(workflow).not.toMatch(/--mock/);
+    const script = fs.readFileSync(path.resolve('action/review.sh'), 'utf-8');
+    expect(script).toContain('AI review: SKIPPED');
+    expect(script).not.toMatch(/--mock/);
+  });
+
+  it('does not default live review to Chat Completions', () => {
+    const client = fs.readFileSync(path.resolve('src/core/codex-client.ts'), 'utf-8');
+    const request = fs.readFileSync(path.resolve('src/core/review-request.ts'), 'utf-8');
+    expect(request).toContain('/v1/responses');
+    expect(request).toContain('gpt-5.6');
+    expect(client).not.toContain('chat/completions');
+    expect(request).not.toContain('chat/completions');
   });
 });

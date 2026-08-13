@@ -3,24 +3,18 @@ import { CodexConfig } from '../types/index.js';
 import { deepMergeConfig, getDefaultConfig } from './config.js';
 import { ValidationError } from './errors.js';
 
+const DEFAULT_AGENTS_TEXT = 'Default AGENTS.md rules: Enforce strict mode, 80% coverage floor, clean architecture.';
+
 export class AgentsParser {
-  public static parseAgentsFile(filePath: string): string[] {
+  public static loadAgentsText(filePath: string): string {
     if (!fs.existsSync(filePath)) {
-      return ['Default AGENTS.md rules: Enforce strict mode, 80% coverage floor, clean architecture.'];
+      return DEFAULT_AGENTS_TEXT;
     }
+    return fs.readFileSync(filePath, 'utf-8');
+  }
 
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const lines = content.split('\n');
-    const rules: string[] = [];
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-        rules.push(trimmed.substring(2).trim());
-      }
-    }
-
-    return rules.length > 0 ? rules : [content];
+  public static parseAgentsFile(filePath: string): string[] {
+    return [AgentsParser.loadAgentsText(filePath)];
   }
 
   public static parseConfigFile(configPath: string): CodexConfig {

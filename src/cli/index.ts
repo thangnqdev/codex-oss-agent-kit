@@ -3,10 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AgentsParser } from '../core/agents-parser.js';
 import { CodexClient } from '../core/codex-client.js';
-import { truncateToMaxLines } from '../core/config.js';
 import { CodexApiError, SecurityAuditError, ValidationError } from '../core/errors.js';
 import { IssueTriager } from '../core/issue-triager.js';
-import { PRAnalyzer } from '../core/pr-analyzer.js';
+import { runReview } from '../core/review-run.js';
 import { SecurityAuditor } from '../core/security-auditor.js';
 import { CodexConfig } from '../types/index.js';
 
@@ -21,6 +20,9 @@ interface GlobalCliOptions {
   readonly mock?: boolean;
   readonly apiKey?: string;
   readonly config?: string;
+  readonly model?: string;
+  readonly maxDiffLines?: string;
+  readonly format?: string;
 }
 
 interface ReviewCliOptions {
@@ -50,44 +52,67 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
 
   program
     .name('codex-oss')
-    .description('AI-Powered Open-Source Maintainer Toolkit & GitHub Action Engine built for OpenAI Codex for OSS compliance.')
+    .description('Open-source maintainer toolkit: review, triage, and static audit using the OpenAI Responses API.')
     .version('1.0.0')
-    .option('--mock', 'Use mock completions without calling the Codex API')
+    .option('--mock', 'Use mock completions without calling the OpenAI API (local only, not a CI quality gate)')
     .option('--api-key <key>', 'OpenAI API key (overrides OPENAI_API_KEY)')
-    .option('--config <path>', 'Path to .codex/config.json', '.codex/config.json');
+    .option('--config <path>', 'Path to .codex/config.json', '.codex/config.json')
+    .option('--model <id>', 'Override reviewSettings.model')
+    .option('--max-diff-lines <n>', 'Override reviewSettings.maxDiffLines')
+    .option('--format <fmt>', 'Output format: text or json', 'text');
 
   program
     .command('review')
-    .description('Review pull request code diff against AGENTS.md guidelines')
+    .description('Review a pull request diff against AGENTS.md (AI signal plus deterministic gates)')
     .option('-d, --diff <path>', 'Path to diff file')
     .option('-a, --agents <path>', 'Path to AGENTS.md file', 'AGENTS.md')
     .action(async (options: ReviewCliOptions, command: Command) => {
       const globals = command.optsWithGlobals() as GlobalCliOptions;
-      const config = loadConfig(io, globals.config);
+      const config = applyCliOverrides(loadConfig(io, globals.config), globals);
       const diffPath = requireOption(options.diff, 'Missing required --diff <path>');
       const diffContent = readRequiredFile(resolvePath(io.cwd, diffPath), 'Diff file');
       const client = createClient(io, globals, config);
-      const analyzer = new PRAnalyzer(client);
-      const agentRules = AgentsParser.parseAgentsFile(resolvePath(io.cwd, options.agents ?? 'AGENTS.md'));
-      const truncatedDiff = truncateToMaxLines(diffContent, config.reviewSettings.maxDiffLines);
-      const result = await analyzer.analyzeDiff(truncatedDiff, agentRules);
+      const agentsText = AgentsParser.loadAgentsText(resolvePath(io.cwd, options.agents ?? 'AGENTS.md'));
+      const result = await runReview({
+        diffContent,
+        agentsText,
+        maxDiffLines: config.reviewSettings.maxDiffLines,
+        client,
+      });
 
-      writeln(io.stdout, '=== Codex OSS Pull Request Review ===');
-      writeln(io.stdout, `Approved: ${result.approved ? 'YES' : 'NO'}`);
-      writeln(io.stdout, `Quality Score: ${result.score}/100`);
-      writeln(io.stdout, `Summary: ${result.summary}`);
-      if (result.ruleViolations.length > 0) {
-        writeln(io.stdout, `Rule Violations: ${result.ruleViolations.join(', ')}`);
-      }
-      if (result.suggestions.length > 0) {
-        writeln(io.stdout, `Suggestions: ${result.suggestions.join(', ')}`);
+      const jsonPayload: Record<string, unknown> = {
+        approved: result.approved,
+        score: result.score,
+        summary: result.summary,
+        ruleViolations: result.ruleViolations,
+        suggestions: result.suggestions,
+        reviewedLines: result.reviewedLines,
+        totalLines: result.totalLines,
+        chunkCount: result.chunkCount,
+      };
+
+      if (globals.format === 'json') {
+        writeln(io.stdout, JSON.stringify(jsonPayload));
+      } else {
+        writeln(io.stdout, '=== Codex OSS Pull Request Review ===');
+        writeln(io.stdout, `Reviewed lines: ${result.reviewedLines}/${result.totalLines}`);
+        writeln(io.stdout, `Approved: ${result.approved ? 'YES' : 'NO'}`);
+        writeln(io.stdout, `Quality Score: ${result.score}/100`);
+        writeln(io.stdout, `Summary: ${result.summary}`);
+        writeln(io.stdout, 'Note: AI verdict is a signal; deterministic audit/size/key gates still apply.');
+        if (result.ruleViolations.length > 0) {
+          writeln(io.stdout, `Rule Violations: ${result.ruleViolations.join(', ')}`);
+        }
+        if (result.suggestions.length > 0) {
+          writeln(io.stdout, `Suggestions: ${result.suggestions.join(', ')}`);
+        }
       }
 
       if (config.rules.securityAuditOnPR) {
         const auditor = new SecurityAuditor();
         const audit = auditor.auditContent(diffContent, diffPath);
-        writeln(io.stdout, `Security Audit Passed: ${audit.passed ? 'YES' : 'NO'}`);
-        if (audit.findings.length > 0) {
+        if (globals.format !== 'json') {
+          writeln(io.stdout, `Security Audit Passed: ${audit.passed ? 'YES' : 'NO'}`);
           for (const finding of audit.findings) {
             writeln(io.stdout, `- [${finding.severity.toUpperCase()}] ${finding.ruleId}: ${finding.description}`);
           }
@@ -110,7 +135,7 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
     .option('-b, --body <body>', 'Issue body content', 'Issue details')
     .action(async (options: TriageCliOptions, command: Command) => {
       const globals = command.optsWithGlobals() as GlobalCliOptions;
-      const config = loadConfig(io, globals.config);
+      const config = applyCliOverrides(loadConfig(io, globals.config), globals);
       const client = createClient(io, globals, config);
       const triager = new IssueTriager(client);
       const result = await triager.triageIssue(options.title ?? 'Bug report', options.body ?? 'Issue details');
@@ -124,7 +149,7 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
 
   program
     .command('audit')
-    .description('Perform static security audit on source file')
+    .description('Perform static security audit on source file or unified diff')
     .option('-f, --file <path>', 'Path to file to audit')
     .action((options: AuditCliOptions) => {
       const filePath = requireOption(options.file, 'Missing required --file <path>');
@@ -204,6 +229,29 @@ function createClient(io: CliIo, globals: GlobalCliOptions, config: CodexConfig)
     apiKey,
     model: config.reviewSettings.model,
   });
+}
+
+function applyCliOverrides(config: CodexConfig, globals: GlobalCliOptions): CodexConfig {
+  let model = config.reviewSettings.model;
+  let maxDiffLines = config.reviewSettings.maxDiffLines;
+  if (globals.model && globals.model.trim() !== '') {
+    model = globals.model;
+  }
+  if (globals.maxDiffLines !== undefined && globals.maxDiffLines !== '') {
+    const parsed = Number(globals.maxDiffLines);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      throw new ValidationError('--max-diff-lines must be a positive number');
+    }
+    maxDiffLines = parsed;
+  }
+  return {
+    ...config,
+    reviewSettings: {
+      ...config.reviewSettings,
+      model,
+      maxDiffLines,
+    },
+  };
 }
 
 function loadConfig(io: CliIo, configPath: string | undefined): CodexConfig {

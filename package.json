@@ -2,7 +2,7 @@
   "name": "codex-oss-agent-kit",
   "version": "1.0.0",
   "type": "module",
-  "description": "An AI-powered open-source maintainer toolkit & GitHub Action engine built for OpenAI Codex for OSS compliance.",
+  "description": "An open-source maintainer toolkit and drop-in GitHub Action for PR review, issue triage, and static secret scanning.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

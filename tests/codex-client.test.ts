@@ -6,7 +6,7 @@ import { jsonCompletionResponse } from './helpers.js';
 describe('CodexClient', () => {
   it('initializes with default options and mock mode', () => {
     const client = new CodexClient({ mockMode: true });
-    expect(client.getModel()).toBe('gpt-4o');
+    expect(client.getModel()).toBe('gpt-5.6');
     expect(client.isMockMode()).toBe(true);
   });
 
@@ -146,14 +146,40 @@ describe('CodexClient', () => {
     await expect(client.generateCompletion('hello')).rejects.toBeInstanceOf(ValidationError);
   });
 
-  it('rejects a JSON body with no choices', async () => {
+  it('rejects a JSON body with no Responses output', async () => {
     const client = new CodexClient({
       apiKey: 'sk-test',
       mockMode: false,
-      fetchImpl: async () => new Response(JSON.stringify({ choices: [] }), { status: 200 }),
+      fetchImpl: async () => new Response(JSON.stringify({ output: [] }), { status: 200 }),
     });
 
     await expect(client.generateCompletion('hello')).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('posts to the Responses API with a structured schema and the configured model', async () => {
+    let url = '';
+    let body = '';
+    const client = new CodexClient({
+      apiKey: 'sk-test',
+      mockMode: false,
+      model: 'gpt-5.6',
+      fetchImpl: async (input, init) => {
+        url = String(input);
+        body = String(init?.body ?? '');
+        return jsonCompletionResponse('ok');
+      },
+    });
+    const { PR_REVIEW_JSON_SCHEMA } = await import('../src/core/review-request.js');
+    await client.generateCompletion('review this', 'system', PR_REVIEW_JSON_SCHEMA);
+    expect(url).toBe('https://api.openai.com/v1/responses');
+    const payload = JSON.parse(body) as {
+      model: string;
+      text?: { format?: { type?: string; name?: string; schema?: unknown } };
+    };
+    expect(payload.model).toBe('gpt-5.6');
+    expect(payload.text?.format?.type).toBe('json_schema');
+    expect(payload.text?.format?.name).toBe('pr_review_result');
+    expect(payload.text?.format?.schema).toBeDefined();
   });
 
   it('wraps unexpected fetch failures as CodexApiError', async () => {

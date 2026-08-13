@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { deepMergeConfig, getDefaultConfig, truncateToMaxLines, validateConfig } from '../src/core/config.js';
+import { deepMergeConfig, getDefaultConfig, validateConfig } from '../src/core/config.js';
 import { ValidationError } from '../src/core/errors.js';
 
 describe('config helpers', () => {
   it('returns a complete default config', () => {
     const config = getDefaultConfig();
-    expect(config.reviewSettings.model).toBe('gpt-4o');
+    expect(config.reviewSettings.model).toBe('gpt-5.6');
     expect(config.rules.securityAuditOnPR).toBe(true);
   });
 
@@ -61,9 +61,4 @@ describe('config helpers', () => {
     })).toThrow(/securityAuditOnPR/i);
   });
 
-  it('truncates text to maxDiffLines and rejects non-positive limits', () => {
-    expect(truncateToMaxLines('a\nb\nc', 2)).toBe('a\nb');
-    expect(truncateToMaxLines('a\nb', 10)).toBe('a\nb');
-    expect(() => truncateToMaxLines('a', 0)).toThrow(ValidationError);
-  });
 });

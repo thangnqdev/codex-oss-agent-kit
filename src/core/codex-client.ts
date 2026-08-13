@@ -1,4 +1,10 @@
 import { CodexApiError, ValidationError } from './errors.js';
+import {
+  DEFAULT_REVIEW_MODEL,
+  JsonSchemaSpec,
+  buildResponsesRequest,
+  extractResponsesText,
+} from './review-request.js';
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -12,7 +18,6 @@ export interface CodexClientOptions {
   readonly retryBackoffMs?: number;
 }
 
-const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_BACKOFF_MS = 250;
@@ -27,7 +32,7 @@ export class CodexClient {
   private readonly retryBackoffMs: number;
 
   constructor(options: CodexClientOptions = {}) {
-    this.model = options.model || 'gpt-4o';
+    this.model = options.model || DEFAULT_REVIEW_MODEL;
     this.fetchImpl = options.fetchImpl;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
@@ -56,7 +61,11 @@ export class CodexClient {
     return this.mockMode;
   }
 
-  public async generateCompletion(prompt: string, systemPrompt?: string): Promise<string> {
+  public async generateCompletion(
+    prompt: string,
+    systemPrompt?: string,
+    schema?: JsonSchemaSpec,
+  ): Promise<string> {
     if (this.mockMode) {
       return this.generateMockResponse(prompt, systemPrompt);
     }
@@ -70,7 +79,7 @@ export class CodexClient {
       }
 
       try {
-        return await this.performRequest(prompt, systemPrompt);
+        return await this.performRequest(prompt, systemPrompt, schema);
       } catch (error) {
         lastError = error;
         if (error instanceof CodexApiError && error.retryable && attempt < maxAttempts - 1) {
@@ -86,7 +95,11 @@ export class CodexClient {
     throw new CodexApiError('Codex API call failed after retries');
   }
 
-  private async performRequest(prompt: string, systemPrompt?: string): Promise<string> {
+  private async performRequest(
+    prompt: string,
+    systemPrompt: string | undefined,
+    schema: JsonSchemaSpec | undefined,
+  ): Promise<string> {
     const controller = new AbortController();
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
@@ -97,25 +110,22 @@ export class CodexClient {
       }, this.timeoutMs);
     });
 
+    const request = buildResponsesRequest(
+      this.model,
+      prompt,
+      systemPrompt || 'You are an OpenAI review assistant for open-source maintainers.',
+      schema,
+    );
+
     try {
       const response = await Promise.race([
-        this.doFetch(OPENAI_CHAT_COMPLETIONS_URL, {
+        this.doFetch(request.url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${this.apiKey}`,
           },
-          body: JSON.stringify({
-            model: this.model,
-            messages: [
-              {
-                role: 'system',
-                content: systemPrompt || 'You are an OpenAI Codex AI Agent assistant for Open Source maintainers.',
-              },
-              { role: 'user', content: prompt },
-            ],
-            temperature: 0.2,
-          }),
+          body: JSON.stringify(request.body),
           signal: controller.signal,
         }),
         timeoutPromise,
@@ -123,7 +133,7 @@ export class CodexClient {
 
       if (response.status === 429 || response.status >= 500) {
         throw new CodexApiError(
-          `OpenAI Codex API returned status ${response.status}: ${response.statusText}`,
+          `OpenAI Responses API returned status ${response.status}: ${response.statusText}`,
           response.status,
           true,
         );
@@ -131,7 +141,7 @@ export class CodexClient {
 
       if (!response.ok) {
         throw new CodexApiError(
-          `OpenAI Codex API returned status ${response.status}: ${response.statusText}`,
+          `OpenAI Responses API returned status ${response.status}: ${response.statusText}`,
           response.status,
           false,
         );
@@ -144,7 +154,11 @@ export class CodexClient {
         throw new ValidationError('Codex API returned non-JSON body');
       }
 
-      return extractMessageContent(data);
+      const content = extractResponsesText(data);
+      if (!content || content.trim() === '') {
+        throw new ValidationError('Codex API returned empty content');
+      }
+      return content;
     } catch (error) {
       if (error instanceof ValidationError || error instanceof CodexApiError) {
         throw error;
@@ -169,7 +183,7 @@ export class CodexClient {
   private generateMockResponse(prompt: string, _systemPrompt?: string): string {
     const normalized = prompt.toLowerCase();
 
-    if (normalized.includes('review') || normalized.includes('diff')) {
+    if (normalized.includes('review') || normalized.includes('diff') || normalized.includes('untrusted')) {
       return JSON.stringify({
         approved: true,
         score: 95,
@@ -199,34 +213,6 @@ export class CodexClient {
 
     return 'Mock Codex Completion Response';
   }
-}
-
-function extractMessageContent(data: unknown): string {
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new ValidationError('Codex API returned a non-object JSON body');
-  }
-
-  const record = data as { choices?: unknown };
-  if (!Array.isArray(record.choices) || record.choices.length === 0) {
-    throw new ValidationError('Codex API returned no choices');
-  }
-
-  const first = record.choices[0];
-  if (typeof first !== 'object' || first === null || Array.isArray(first)) {
-    throw new ValidationError('Codex API returned empty content');
-  }
-
-  const message = (first as { message?: unknown }).message;
-  if (typeof message !== 'object' || message === null || Array.isArray(message)) {
-    throw new ValidationError('Codex API returned empty content');
-  }
-
-  const content = (message as { content?: unknown }).content;
-  if (typeof content !== 'string' || content.trim() === '') {
-    throw new ValidationError('Codex API returned empty content');
-  }
-
-  return content;
 }
 
 function delay(ms: number): Promise<void> {

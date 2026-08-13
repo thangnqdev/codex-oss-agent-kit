@@ -4,28 +4,32 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/thangnqdev/codex-oss-agent-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/thangnqdev/codex-oss-agent-kit/actions/workflows/ci.yml)
 
-> An open-source maintainer toolkit and GitHub Action engine for OpenAI **Codex for Open Source** program compliance and automated repository triage.
+> An open-source maintainer toolkit and drop-in GitHub Action for PR review, issue triage, and static secret scanning. Ready to plug into Codex-style maintainer workflows.
+
+The [OpenAI Codex for Open Source](https://developers.openai.com/community/codex-for-oss) program supports core maintainers of widely used public projects (product access and credits). This repository is **not** an official compliance kit for that program.
 
 ---
 
 ## Overview
 
-**`codex-oss-agent-kit`** gives maintainers a CLI that can:
+**`codex-oss-agent-kit`** gives maintainers a CLI and a reusable GitHub Action that can:
 
-1. **Review a pull request diff** against [`AGENTS.md`](./AGENTS.md) rules via the OpenAI Chat Completions API (or `--mock` for offline runs). The command prints an approval decision, score, summary, and rule findings. It does **not** post GitHub inline review comments.
+1. **Review a pull request diff** against the full [`AGENTS.md`](./AGENTS.md) text via the **OpenAI Responses API** (default model `gpt-5.6`) with a structured JSON schema. The command prints an approval **signal**, score, summary, and `Reviewed lines: N/M`. It does **not** post GitHub inline review comments. The AI verdict is a signal, not the only pass/fail authority.
 2. **Triage an issue** by classifying category/complexity and recommending labels.
-3. **Audit a source file** with static secret/unsafe-pattern checks (`sk-`, `sk-proj-`, `sk-svcacct-`, `ghp_`, `github_pat_`, `eval(`). This is a regex scanner, not an OWASP engine or dependency CVE audit.
+3. **Audit a source file or unified diff** with static secret/unsafe-pattern checks (`sk-`, `sk-proj-`, `sk-svcacct-`, `ghp_`, `github_pat_`, `eval(`). Unified diffs are scanned on **added (`+`) lines only**. This is a regex scanner, not an OWASP engine or dependency CVE audit.
 
-Live review/triage calls use a request timeout, bounded retries on 429/5xx, and reject empty or non-JSON model output. Invalid review JSON fails closed (does not auto-approve).
+Live review/triage calls use a request timeout, bounded retries on 429/5xx, and structured outputs. Invalid or empty model JSON fails closed (does not auto-approve). Diffs larger than `maxDiffLines` are chunked so every line is reviewed, or the run fail-closes if a single hunk cannot fit. Diff text is treated as **untrusted data**.
+
+`--mock` is for local development only. CI and the drop-in Action never mock-approve when the API key is missing; they print `AI review: SKIPPED`.
 
 ---
 
 ## Key Features
 
-- **Codex API client**: `gpt-4o` by default (override via `.codex/config.json` `reviewSettings.model`) with timeout, retry, and response validation.
-- **`AGENTS.md` rules engine**: Parses repository agent guidelines and includes them in the review prompt.
+- **Responses API client**: `gpt-5.6` by default (override via `.codex/config.json` `reviewSettings.model` or `--model`) with timeout, retry, and a JSON schema on the request.
+- **Full `AGENTS.md`**: The reviewer receives the entire file, including numbered quality-gate lines and prose rules.
 - **Config that is actually applied**: `.codex/config.json` is deep-merged; `model`, `maxDiffLines`, and `securityAuditOnPR` change runtime behavior.
-- **GitHub Actions**: CI (type-check, tests with an 80% coverage floor, build), optional PR review, and a security scan over `src/**`.
+- **Drop-in GitHub Action**: `uses: thangnqdev/codex-oss-agent-kit@main` with inputs `openai-api-key`, `model`, `agents-file`, `max-diff-size` and outputs `approved`, `score`, `findings`.
 - **Type-safe core**: TypeScript strict mode. Tests run with Vitest and enforce 80% line/statement/branch/function coverage.
 
 ---
@@ -49,14 +53,6 @@ npm install -g codex-oss-agent-kit
 codex-oss --help
 ```
 
-Or:
-
-```bash
-npx codex-oss-agent-kit --help
-```
-
-Published packages include the compiled `dist/` tree (see the `files` allowlist). Local clones must build first.
-
 ### Environment Setup
 
 Live review/triage requires a key:
@@ -65,15 +61,15 @@ Live review/triage requires a key:
 export OPENAI_API_KEY="sk-..."
 ```
 
-Alternatively pass `--api-key`. Without a key, pass `--mock` or the CLI exits non-zero. Audit is static and does not need a key.
+Alternatively pass `--api-key`. Without a key, pass `--mock` for a local dry-run or the CLI exits non-zero. Audit is static and does not need a key.
 
 ---
 
 ## CLI Usage
 
-Global flags: `--mock`, `--api-key <key>`, `--config <path>` (default `.codex/config.json`).
+Global flags: `--mock`, `--api-key <key>`, `--config <path>`, `--model <id>`, `--max-diff-lines <n>`, `--format text|json`.
 
-`--diff` (review) and `--file` (audit) are required and must be readable. Missing or unreadable paths exit non-zero. A rejected review or a failed audit (high/critical findings) also exits non-zero.
+`--diff` (review) and `--file` (audit) are required and must be readable. Missing or unreadable paths exit non-zero. A rejected review, an over-limit hunk, or a failed audit (high/critical findings on added lines) also exits non-zero.
 
 ### 1. Review a Pull Request / Diff
 
@@ -96,24 +92,48 @@ codex-oss audit --file src/core/codex-client.ts
 
 ---
 
+## Drop-in GitHub Action
+
+```yaml
+name: PR review
+on: pull_request
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: thangnqdev/codex-oss-agent-kit@main
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          model: gpt-5.6
+          agents-file: AGENTS.md
+          max-diff-size: '1000'
+```
+
+If `openai-api-key` is empty (typical for fork PRs, where repository secrets are not available), the Action prints `AI review: SKIPPED` and sets `approved=false`. That is not a mock pass.
+
+---
+
 ## Architecture
 
 ```
                        ┌────────────────────────────────┐
-                       │    CLI Entry (src/cli/index)   │
+                       │    CLI / Action (src/cli)      │
                        └───────────────┬────────────────┘
                                        │
             ┌──────────────────────────┼──────────────────────────┐
             ▼                          ▼                          ▼
    ┌─────────────────┐       ┌──────────────────┐       ┌──────────────────┐
    │   PR Analyzer   │       │  Issue Triager   │       │ Security Auditor │
-   └────────┬────────┘       └────────┬─────────┘       │ (static patterns)│
+   └────────┬────────┘       └────────┬─────────┘       │ (+ lines of diffs)│
             │                         │                 └──────────────────┘
             └─────────────────────────┼──────────────────────────┘
                                       ▼
                         ┌──────────────────────────┐
                         │       CodexClient        │
-                        │ (OpenAI Chat Completions)│
+                        │   OpenAI Responses API   │
                         └──────────────────────────┘
 ```
 
@@ -121,15 +141,17 @@ The library entry (`src/index.ts`) exports core + types only. The CLI is the `co
 
 ---
 
-## OpenAI Codex for OSS Compliance Matrix
+## Repository readiness / quality checklist for Codex workflows
 
-| Requirement | Status | Details |
+This is a **self-imposed readiness checklist** for running Codex-style maintainer workflows in this repo. It is **not** an official OpenAI “Codex for OSS compliance” standard.
+
+| Check | Status | Details |
 |---|---|---|
-| **OSI Approved License** | MIT License | Full open-source freedom |
-| **Agent Instructions** | `AGENTS.md` | Standardized AI coding agent guidelines |
-| **Automated Workflows** | GitHub Actions | CI, PR review, security scan over `src/**` |
-| **Community Governance** | Present | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` |
-| **Quality & Coverage** | Vitest | 80% coverage floor enforced in `npm test` |
+| **OSI approved license** | MIT License | Redistributable open source |
+| **Agent instructions** | `AGENTS.md` | Full file is sent to the reviewer |
+| **Automated workflows** | GitHub Actions | CI, drop-in PR review Action, security scan over `src/**` |
+| **Community docs** | Present | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` |
+| **Quality & coverage** | Vitest | 80% coverage floor enforced in `npm test` |
 
 ---
 

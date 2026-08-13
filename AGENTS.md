@@ -1,6 +1,6 @@
 # Repository Instructions for AI Agents & Developers
 
-This repository strictly adheres to OpenAI's **Codex for Open Source** guidelines and standards. All AI agents (Codex, ChatGPT) and human maintainers MUST comply with the following architecture, coding, testing, and security contract.
+This repository follows an internal architecture, coding, testing, and security contract for human maintainers and AI coding agents. These rules are repository policy, not an official OpenAI program standard.
 
 ---
 

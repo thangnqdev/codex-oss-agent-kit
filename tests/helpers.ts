@@ -40,10 +40,16 @@ export function envWithoutKey(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function jsonCompletionResponse(content: string, status: number = 200): Response {
+export function jsonResponsesResponse(content: string, status: number = 200): Response {
   return new Response(
     JSON.stringify({
-      choices: [{ message: { content } }],
+      output_text: content,
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: content }],
+        },
+      ],
     }),
     {
       status,
@@ -52,6 +58,8 @@ export function jsonCompletionResponse(content: string, status: number = 200): R
     },
   );
 }
+
+export const jsonCompletionResponse = jsonResponsesResponse;
 
 export function approvedReviewJson(): string {
   return JSON.stringify({

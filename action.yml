@@ -1,0 +1,48 @@
+name: 'Codex OSS PR Review'
+description: 'Review a pull request diff with the OpenAI Responses API. Missing keys skip the AI gate (not a pass).'
+author: 'thangnqdev'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  openai-api-key:
+    description: 'OpenAI API key. If empty, the Action prints "AI review: SKIPPED" and does not mock-approve.'
+    required: true
+  model:
+    description: 'OpenAI model id (GPT-5.6 family by default)'
+    required: false
+    default: 'gpt-5.6'
+  agents-file:
+    description: 'Path to the repository AGENTS.md (or equivalent) file'
+    required: false
+    default: 'AGENTS.md'
+  max-diff-size:
+    description: 'Maximum diff lines per review request chunk'
+    required: false
+    default: '1000'
+
+outputs:
+  approved:
+    description: 'true only when the AI signal approved and deterministic gates passed; false when skipped or rejected'
+    value: ${{ steps.review.outputs.approved }}
+  score:
+    description: 'Review score 0-100; empty when skipped'
+    value: ${{ steps.review.outputs.score }}
+  findings:
+    description: 'Rule violations, skip reason, or other findings'
+    value: ${{ steps.review.outputs.findings }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Review pull request
+      id: review
+      shell: bash
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        REVIEW_MODEL: ${{ inputs.model }}
+        AGENTS_FILE: ${{ inputs.agents-file }}
+        MAX_DIFF_SIZE: ${{ inputs.max-diff-size }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "${{ github.action_path }}/action/review.sh"

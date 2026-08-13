@@ -1,6 +1,7 @@
 import { CodexClient } from './codex-client.js';
 import { IssueTriageResult } from '../types/index.js';
 import { parseIssueTriageResult } from './result-schemas.js';
+import { ISSUE_TRIAGE_JSON_SCHEMA } from './review-request.js';
 
 export class IssueTriager {
   private readonly client: CodexClient;
@@ -20,10 +21,14 @@ export class IssueTriager {
       };
     }
 
-    const systemPrompt = 'You are an automated issue triager for Open Source maintainers. Evaluate the issue and return JSON matching IssueTriageResult.';
+    const systemPrompt = 'You are an automated issue triager for Open Source maintainers. Return an IssueTriageResult object.';
     const userPrompt = `Issue Title: ${title}\nIssue Body:\n${body}`;
 
-    const rawResponse = await this.client.generateCompletion(userPrompt, systemPrompt);
+    const rawResponse = await this.client.generateCompletion(
+      userPrompt,
+      systemPrompt,
+      ISSUE_TRIAGE_JSON_SCHEMA,
+    );
     return parseIssueTriageResult(rawResponse);
   }
 }

@@ -1,4 +1,5 @@
 import { SecurityAuditResult } from '../types/index.js';
+import { contentToAudit } from './diff-lines.js';
 import { SecurityAuditError } from './errors.js';
 
 interface SecretPattern {
@@ -21,9 +22,10 @@ export class SecurityAuditor {
 
   public auditContent(content: string, location: string = 'inline'): SecurityAuditResult {
     const findings: SecurityAuditResult['findings'] = [];
+    const scanTarget = contentToAudit(content);
 
     for (const rule of SecurityAuditor.SECRET_PATTERNS) {
-      if (rule.pattern.test(content)) {
+      if (rule.pattern.test(scanTarget)) {
         findings.push({
           severity: rule.severity,
           ruleId: rule.ruleId,
