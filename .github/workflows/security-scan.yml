@@ -24,4 +24,16 @@ jobs:
         run: npm run build
 
       - name: Run Static Security Audit
-        run: node bin/codex-oss.js audit --file src/index.ts
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files 'src/*.ts' 'src/**/*.ts')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No source files to audit"
+            exit 1
+          fi
+          status=0
+          for f in "${files[@]}"; do
+            echo "Auditing ${f}"
+            node bin/codex-oss.js audit --file "$f" || status=1
+          done
+          exit "$status"

@@ -28,4 +28,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           git diff origin/${{ github.base_ref }}...HEAD > pr.diff
-          node bin/codex-oss.js review --diff pr.diff --agents AGENTS.md
+          if [ -n "${OPENAI_API_KEY}" ]; then
+            node bin/codex-oss.js review --diff pr.diff --agents AGENTS.md
+          else
+            echo "OPENAI_API_KEY is not set; running mock review as a local quality gate."
+            node bin/codex-oss.js --mock review --diff pr.diff --agents AGENTS.md
+          fi

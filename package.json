@@ -8,11 +8,21 @@
   "bin": {
     "codex-oss": "./bin/codex-oss.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "AGENTS.md"
+  ],
   "scripts": {
     "build": "tsc",
     "type-check": "tsc --noEmit",
-    "test": "vitest run",
-    "start": "node bin/codex-oss.js"
+    "test": "vitest run --coverage",
+    "start": "node bin/codex-oss.js",
+    "prepare": "node scripts/build-if-present.js",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "openai",
@@ -32,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.9",
+    "@vitest/coverage-v8": "^1.6.0",
     "typescript": "^5.5.2",
     "vitest": "^1.6.0"
   },

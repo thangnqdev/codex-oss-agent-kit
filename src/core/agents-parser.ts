@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import { CodexConfig } from '../types/index.js';
+import { deepMergeConfig, getDefaultConfig } from './config.js';
+import { ValidationError } from './errors.js';
 
 export class AgentsParser {
   public static parseAgentsFile(filePath: string): string[] {
@@ -22,32 +24,28 @@ export class AgentsParser {
   }
 
   public static parseConfigFile(configPath: string): CodexConfig {
-    const defaultConfig: CodexConfig = {
-      version: '1.0.0',
-      program: 'Codex for Open Source',
-      rules: {
-        enforceStrictTypes: true,
-        requireCoverageFloor: 80,
-        securityAuditOnPR: true,
-        autoTriageIssues: true,
-      },
-      reviewSettings: {
-        model: 'gpt-4o',
-        maxDiffLines: 1000,
-        commentOnPass: false,
-      },
-    };
-
     if (!fs.existsSync(configPath)) {
-      return defaultConfig;
+      return getDefaultConfig();
     }
 
+    let raw: string;
     try {
-      const raw = fs.readFileSync(configPath, 'utf-8');
-      const parsed = JSON.parse(raw) as Partial<CodexConfig>;
-      return { ...defaultConfig, ...parsed };
+      raw = fs.readFileSync(configPath, 'utf-8');
     } catch {
-      return defaultConfig;
+      throw new ValidationError(`Config file is unreadable: ${configPath}`);
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new ValidationError(`Config file contains invalid JSON: ${configPath}`);
+    }
+
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new ValidationError(`Config file must contain a JSON object: ${configPath}`);
+    }
+
+    return deepMergeConfig(getDefaultConfig(), parsed as Partial<CodexConfig>);
   }
 }

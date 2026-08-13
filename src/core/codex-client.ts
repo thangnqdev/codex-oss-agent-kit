@@ -1,18 +1,51 @@
+import { CodexApiError, ValidationError } from './errors.js';
+
+export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
 export interface CodexClientOptions {
-  apiKey?: string;
-  model?: string;
-  mockMode?: boolean;
+  readonly apiKey?: string;
+  readonly model?: string;
+  readonly mockMode?: boolean;
+  readonly fetchImpl?: FetchLike;
+  readonly timeoutMs?: number;
+  readonly maxRetries?: number;
+  readonly retryBackoffMs?: number;
 }
 
+const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_RETRY_BACKOFF_MS = 250;
+
 export class CodexClient {
-  private apiKey: string;
-  private model: string;
-  private mockMode: boolean;
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly mockMode: boolean;
+  private readonly fetchImpl: FetchLike | undefined;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly retryBackoffMs: number;
 
   constructor(options: CodexClientOptions = {}) {
-    this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || 'mock-key';
     this.model = options.model || 'gpt-4o';
-    this.mockMode = options.mockMode ?? (this.apiKey === 'mock-key');
+    this.fetchImpl = options.fetchImpl;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.retryBackoffMs = options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+
+    const resolvedKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? '';
+    this.mockMode = options.mockMode ?? false;
+
+    if (this.mockMode) {
+      this.apiKey = resolvedKey || 'mock-key';
+      return;
+    }
+
+    if (!resolvedKey) {
+      throw new ValidationError('Live CodexClient requires an API key');
+    }
+
+    this.apiKey = resolvedKey;
   }
 
   public getModel(): string {
@@ -28,39 +61,115 @@ export class CodexClient {
       return this.generateMockResponse(prompt, systemPrompt);
     }
 
+    let lastError: unknown;
+    const maxAttempts = this.maxRetries + 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (attempt > 0) {
+        await delay(this.retryBackoffMs * (2 ** (attempt - 1)));
+      }
+
+      try {
+        return await this.performRequest(prompt, systemPrompt);
+      } catch (error) {
+        lastError = error;
+        if (error instanceof CodexApiError && error.retryable && attempt < maxAttempts - 1) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    throw new CodexApiError('Codex API call failed after retries');
+  }
+
+  private async performRequest(prompt: string, systemPrompt?: string): Promise<string> {
+    const controller = new AbortController();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        controller.abort();
+        reject(new CodexApiError(`Codex API request timed out after ${this.timeoutMs}ms`));
+      }, this.timeoutMs);
+    });
+
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt || 'You are an OpenAI Codex AI Agent assistant for Open Source maintainers.' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.2,
+      const response = await Promise.race([
+        this.doFetch(OPENAI_CHAT_COMPLETIONS_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              {
+                role: 'system',
+                content: systemPrompt || 'You are an OpenAI Codex AI Agent assistant for Open Source maintainers.',
+              },
+              { role: 'user', content: prompt },
+            ],
+            temperature: 0.2,
+          }),
+          signal: controller.signal,
         }),
-      });
+        timeoutPromise,
+      ]);
+
+      if (response.status === 429 || response.status >= 500) {
+        throw new CodexApiError(
+          `OpenAI Codex API returned status ${response.status}: ${response.statusText}`,
+          response.status,
+          true,
+        );
+      }
 
       if (!response.ok) {
-        throw new Error(`OpenAI Codex API returned status ${response.status}: ${response.statusText}`);
+        throw new CodexApiError(
+          `OpenAI Codex API returned status ${response.status}: ${response.statusText}`,
+          response.status,
+          false,
+        );
       }
 
-      const data = await response.json() as { choices: Array<{ message: { content: string } }> };
-      return data.choices[0]?.message?.content || '';
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Codex API Call Failed: ${error.message}`);
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch {
+        throw new ValidationError('Codex API returned non-JSON body');
       }
-      throw new Error('Unknown error during Codex API call');
+
+      return extractMessageContent(data);
+    } catch (error) {
+      if (error instanceof ValidationError || error instanceof CodexApiError) {
+        throw error;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new CodexApiError(`Codex API request timed out after ${this.timeoutMs}ms`);
+      }
+      const message = error instanceof Error ? error.message : 'Unknown error during Codex API call';
+      throw new CodexApiError(`Codex API call failed: ${message}`);
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 
+  private doFetch(input: string, init: RequestInit): Promise<Response> {
+    const impl = this.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    return impl(input, init);
+  }
+
   private generateMockResponse(prompt: string, _systemPrompt?: string): string {
-    if (prompt.includes('review') || prompt.includes('diff')) {
+    const normalized = prompt.toLowerCase();
+
+    if (normalized.includes('review') || normalized.includes('diff')) {
       return JSON.stringify({
         approved: true,
         score: 95,
@@ -70,7 +179,7 @@ export class CodexClient {
       });
     }
 
-    if (prompt.includes('triage') || prompt.includes('issue')) {
+    if (normalized.includes('triage') || normalized.includes('issue')) {
       return JSON.stringify({
         category: 'bug',
         complexity: 'medium',
@@ -80,7 +189,7 @@ export class CodexClient {
       });
     }
 
-    if (prompt.includes('audit') || prompt.includes('security')) {
+    if (normalized.includes('audit') || normalized.includes('security')) {
       return JSON.stringify({
         passed: true,
         riskScore: 0,
@@ -90,4 +199,38 @@ export class CodexClient {
 
     return 'Mock Codex Completion Response';
   }
+}
+
+function extractMessageContent(data: unknown): string {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new ValidationError('Codex API returned a non-object JSON body');
+  }
+
+  const record = data as { choices?: unknown };
+  if (!Array.isArray(record.choices) || record.choices.length === 0) {
+    throw new ValidationError('Codex API returned no choices');
+  }
+
+  const first = record.choices[0];
+  if (typeof first !== 'object' || first === null || Array.isArray(first)) {
+    throw new ValidationError('Codex API returned empty content');
+  }
+
+  const message = (first as { message?: unknown }).message;
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+    throw new ValidationError('Codex API returned empty content');
+  }
+
+  const content = (message as { content?: unknown }).content;
+  if (typeof content !== 'string' || content.trim() === '') {
+    throw new ValidationError('Codex API returned empty content');
+  }
+
+  return content;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

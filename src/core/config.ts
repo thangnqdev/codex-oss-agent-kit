@@ -1,0 +1,94 @@
+import { CodexConfig } from '../types/index.js';
+import { ValidationError } from './errors.js';
+
+export function getDefaultConfig(): CodexConfig {
+  return {
+    version: '1.0.0',
+    program: 'Codex for Open Source',
+    rules: {
+      enforceStrictTypes: true,
+      requireCoverageFloor: 80,
+      securityAuditOnPR: true,
+      autoTriageIssues: true,
+    },
+    reviewSettings: {
+      model: 'gpt-4o',
+      maxDiffLines: 1000,
+      commentOnPass: false,
+    },
+  };
+}
+
+export function validateConfig(config: CodexConfig): CodexConfig {
+  if (typeof config.version !== 'string' || config.version.trim() === '') {
+    throw new ValidationError('Config version must be a non-empty string');
+  }
+  if (typeof config.program !== 'string' || config.program.trim() === '') {
+    throw new ValidationError('Config program must be a non-empty string');
+  }
+  if (typeof config.rules.enforceStrictTypes !== 'boolean') {
+    throw new ValidationError('Config rules.enforceStrictTypes must be a boolean');
+  }
+  if (typeof config.rules.requireCoverageFloor !== 'number' || !Number.isFinite(config.rules.requireCoverageFloor)) {
+    throw new ValidationError('Config rules.requireCoverageFloor must be a number');
+  }
+  if (typeof config.rules.securityAuditOnPR !== 'boolean') {
+    throw new ValidationError('Config rules.securityAuditOnPR must be a boolean');
+  }
+  if (typeof config.rules.autoTriageIssues !== 'boolean') {
+    throw new ValidationError('Config rules.autoTriageIssues must be a boolean');
+  }
+  if (typeof config.reviewSettings.model !== 'string' || config.reviewSettings.model.trim() === '') {
+    throw new ValidationError('Config reviewSettings.model must be a non-empty string');
+  }
+  if (
+    typeof config.reviewSettings.maxDiffLines !== 'number'
+    || !Number.isFinite(config.reviewSettings.maxDiffLines)
+    || config.reviewSettings.maxDiffLines < 1
+  ) {
+    throw new ValidationError('Config reviewSettings.maxDiffLines must be a positive number');
+  }
+  if (typeof config.reviewSettings.commentOnPass !== 'boolean') {
+    throw new ValidationError('Config reviewSettings.commentOnPass must be a boolean');
+  }
+  return config;
+}
+
+export function deepMergeConfig(base: CodexConfig, override: Partial<CodexConfig>): CodexConfig {
+  if (override.rules !== undefined && !isPlainObject(override.rules)) {
+    throw new ValidationError('Config rules must be an object');
+  }
+  if (override.reviewSettings !== undefined && !isPlainObject(override.reviewSettings)) {
+    throw new ValidationError('Config reviewSettings must be an object');
+  }
+
+  const merged: CodexConfig = {
+    version: override.version ?? base.version,
+    program: override.program ?? base.program,
+    rules: {
+      ...base.rules,
+      ...(override.rules ?? {}),
+    },
+    reviewSettings: {
+      ...base.reviewSettings,
+      ...(override.reviewSettings ?? {}),
+    },
+  };
+
+  return validateConfig(merged);
+}
+
+export function truncateToMaxLines(text: string, maxLines: number): string {
+  if (maxLines < 1) {
+    throw new ValidationError('maxDiffLines must be a positive number');
+  }
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) {
+    return text;
+  }
+  return lines.slice(0, maxLines).join('\n');
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

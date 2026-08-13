@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createProgram } from '../dist/cli/index.js';
+import { runCli } from '../dist/cli/index.js';
 
-const program = createProgram();
-program.parse(process.argv);
+const code = await runCli(process.argv.slice(2));
+process.exitCode = code;

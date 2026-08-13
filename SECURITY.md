@@ -20,4 +20,6 @@ If you discover a security vulnerability, please do NOT open a public GitHub iss
 
 ## Automated Security Audits
 
-This repository enforces automated static security scanning via `codex-oss audit` and GitHub Actions. All PRs are audited for credential leaks, dependency vulnerabilities, and unsafe execution paths.
+This repository runs `codex-oss audit` in GitHub Actions over tracked `src/**` TypeScript files. The scanner looks for hardcoded credential shapes (including `sk-`, `sk-proj-`, `sk-svcacct-`, `ghp_`, and `github_pat_`) and `eval(` usage. High and critical findings fail the job.
+
+This is a static pattern check. It is not an OWASP Top 10 engine, a dependency CVE scanner, or a substitute for `npm audit`.
