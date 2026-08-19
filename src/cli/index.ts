@@ -4,11 +4,17 @@ import * as path from 'path';
 import { fileURLToPath } from 'node:url';
 import { AgentsParser } from '../core/agents-parser.js';
 import { CodexClient } from '../core/codex-client.js';
-import { CodexApiError, SecurityAuditError, ValidationError } from '../core/errors.js';
+import {
+  CodexApiError,
+  GitHubApiError,
+  SecurityAuditError,
+  ValidationError,
+} from '../core/errors.js';
+import { GitHubClient, ReviewEvent } from '../core/github-client.js';
 import { IssueTriager } from '../core/issue-triager.js';
 import { runReview } from '../core/review-run.js';
 import { SecurityAuditor } from '../core/security-auditor.js';
-import { CodexConfig } from '../types/index.js';
+import { CodexConfig, PRReviewResult } from '../types/index.js';
 
 export interface CliIo {
   readonly stdout: NodeJS.WritableStream;
@@ -38,6 +44,29 @@ interface TriageCliOptions {
 
 interface AuditCliOptions {
   readonly file?: string;
+}
+
+interface PostReviewCliOptions {
+  readonly repo?: string;
+  readonly pr?: string;
+  readonly result?: string;
+  readonly event?: string;
+  readonly commitId?: string;
+}
+
+interface PostLabelsCliOptions {
+  readonly repo?: string;
+  readonly issue?: string;
+  readonly labels?: string;
+}
+
+interface PostCheckCliOptions {
+  readonly repo?: string;
+  readonly sha?: string;
+  readonly name?: string;
+  readonly conclusion?: string;
+  readonly title?: string;
+  readonly summary?: string;
 }
 
 const DEFAULT_IO: CliIo = {
@@ -207,6 +236,106 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
       }
     });
 
+  const post = program
+    .command('post')
+    .description('Post results back to GitHub (PR review, issue labels, check run)');
+
+  post
+    .command('review')
+    .description('Post a PR review from a review result JSON file (or stdin via --result -)')
+    .option('-r, --repo <owner/name>', 'GitHub repository (overrides GITHUB_REPOSITORY)')
+    .option('-p, --pr <number>', 'Pull request number (overrides PR_NUMBER)')
+    .option('--result <path>', 'Path to review result JSON file, or - for stdin')
+    .option('--event <event>', 'Review event: approve, comment, or request-changes')
+    .option('--commit-id <sha>', 'Commit SHA to attach the review to')
+    .action(async (options: PostReviewCliOptions, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalCliOptions>();
+      const client = createGitHubClient(io, options.repo);
+      const prNumber = parsePositiveInt(
+        options.pr ?? io.env.PR_NUMBER ?? '',
+        'Missing required --pr <number> (or PR_NUMBER env)',
+      );
+      const raw = readResultPayload(io, options.result);
+      const review = parseReviewResultPayload(raw);
+      const event = resolveReviewEvent(options.event, review.approved);
+      const body = formatReviewBody(review);
+
+      await client.postPRReview(prNumber, {
+        event,
+        body,
+        commitId: options.commitId,
+      });
+      if (globals.format === 'json') {
+        writeln(io.stdout, JSON.stringify({ posted: true, event, pr: prNumber }));
+      } else {
+        writeln(io.stdout, `Posted ${event} review on PR #${prNumber}`);
+      }
+    });
+
+  post
+    .command('labels')
+    .description('Add labels to an issue or PR (e.g. from triage output)')
+    .option('-r, --repo <owner/name>', 'GitHub repository (overrides GITHUB_REPOSITORY)')
+    .option('-i, --issue <number>', 'Issue or PR number (overrides ISSUE_NUMBER)')
+    .option('-l, --labels <list>', 'Comma-separated labels')
+    .action(async (options: PostLabelsCliOptions, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalCliOptions>();
+      const client = createGitHubClient(io, options.repo);
+      const issueNumber = parsePositiveInt(
+        options.issue ?? io.env.ISSUE_NUMBER ?? '',
+        'Missing required --issue <number> (or ISSUE_NUMBER env)',
+      );
+      const labels = (options.labels ?? '')
+        .split(',')
+        .map((label) => label.trim())
+        .filter((label) => label !== '');
+      if (labels.length === 0) {
+        throw new ValidationError('Missing required --labels <list>');
+      }
+
+      await client.addLabels(issueNumber, labels);
+      if (globals.format === 'json') {
+        writeln(io.stdout, JSON.stringify({ posted: true, issue: issueNumber, labels }));
+      } else {
+        writeln(io.stdout, `Added labels to #${issueNumber}: ${labels.join(', ')}`);
+      }
+    });
+
+  post
+    .command('check')
+    .description('Create a completed check run reporting the review outcome')
+    .option('-r, --repo <owner/name>', 'GitHub repository (overrides GITHUB_REPOSITORY)')
+    .option('--sha <sha>', 'Head commit SHA (overrides GITHUB_SHA)')
+    .option('--name <name>', 'Check run name', 'codex-oss-review')
+    .option('--conclusion <conclusion>', 'success, failure, neutral, or action_required')
+    .option('--title <title>', 'Check run title', 'Codex OSS Review')
+    .option('--summary <summary>', 'Check run summary text')
+    .action(async (options: PostCheckCliOptions, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalCliOptions>();
+      const client = createGitHubClient(io, options.repo);
+      const headSha = requireOption(
+        options.sha ?? io.env.GITHUB_SHA,
+        'Missing required --sha (or GITHUB_SHA env)',
+      );
+      const conclusion = resolveCheckConclusion(options.conclusion);
+
+      await client.postCheckRun({
+        name: options.name ?? 'codex-oss-review',
+        headSha,
+        conclusion,
+        title: options.title ?? 'Codex OSS Review',
+        summary: options.summary ?? 'Codex OSS review completed.',
+      });
+      if (globals.format === 'json') {
+        writeln(io.stdout, JSON.stringify({ posted: true, conclusion, sha: headSha }));
+      } else {
+        writeln(
+          io.stdout,
+          `Posted check run "${options.name ?? 'codex-oss-review'}" (${conclusion})`,
+        );
+      }
+    });
+
   (program as Command & { getExitCode?: () => number }).getExitCode = (): number => exitCode;
   return program;
 }
@@ -238,7 +367,8 @@ export async function runCli(argv: string[], ioOverrides: Partial<CliIo> = {}): 
     if (
       error instanceof ValidationError ||
       error instanceof CodexApiError ||
-      error instanceof SecurityAuditError
+      error instanceof SecurityAuditError ||
+      error instanceof GitHubApiError
     ) {
       io.stderr.write(`${error.name}: ${error.message}\n`);
       return 1;
@@ -339,4 +469,143 @@ function readPackageVersion(): string {
 
 function writeln(stream: NodeJS.WritableStream, line: string): void {
   stream.write(`${line}\n`);
+}
+
+function createGitHubClient(io: CliIo, repoOverride: string | undefined): GitHubClient {
+  const token = io.env.GITHUB_TOKEN;
+  if (!token || token.trim() === '') {
+    throw new ValidationError(
+      'Posting to GitHub requires GITHUB_TOKEN (or GITHUB_ENV). Pass an env var from the workflow.',
+    );
+  }
+  const repo = repoOverride ?? io.env.GITHUB_REPOSITORY ?? '';
+  if (!repo || repo.trim() === '') {
+    throw new ValidationError(
+      'Missing GitHub repo: pass --repo <owner/name> or set GITHUB_REPOSITORY',
+    );
+  }
+  return new GitHubClient({ token, repo });
+}
+
+function parsePositiveInt(raw: string, errorMessage: string): number {
+  requireOption(raw, errorMessage);
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new ValidationError(errorMessage);
+  }
+  return parsed;
+}
+
+function readResultPayload(io: CliIo, resultPath: string | undefined): string {
+  if (resultPath === undefined || resultPath === '') {
+    throw new ValidationError('Missing required --result <path> (or - for stdin)');
+  }
+  if (resultPath === '-') {
+    return fs.readFileSync(0, 'utf-8');
+  }
+  const resolved = resolvePath(io.cwd, resultPath);
+  try {
+    return fs.readFileSync(resolved, 'utf-8');
+  } catch {
+    throw new ValidationError(`Result file not found or unreadable: ${resolved}`);
+  }
+}
+
+function parseReviewResultPayload(raw: string): PRReviewResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new ValidationError('Review result must be valid JSON');
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new ValidationError('Review result must be a JSON object');
+  }
+  const obj = parsed as Record<string, unknown>;
+  const approved = obj['approved'];
+  const score = obj['score'];
+  const summary = obj['summary'];
+  if (typeof approved !== 'boolean' || typeof score !== 'number' || typeof summary !== 'string') {
+    throw new ValidationError(
+      'Review result must include boolean `approved`, numeric `score`, and string `summary`',
+    );
+  }
+  const violations = Array.isArray(obj['ruleViolations'])
+    ? obj['ruleViolations'].filter((v): v is string => typeof v === 'string')
+    : [];
+  const suggestions = Array.isArray(obj['suggestions'])
+    ? obj['suggestions'].filter((v): v is string => typeof v === 'string')
+    : [];
+  return {
+    approved,
+    score,
+    summary,
+    ruleViolations: violations,
+    suggestions,
+  };
+}
+
+function resolveReviewEvent(optionEvent: string | undefined, approved: boolean): ReviewEvent {
+  if (optionEvent === undefined) {
+    return approved ? 'APPROVE' : 'COMMENT';
+  }
+  const normalized = optionEvent.trim().toLowerCase();
+  switch (normalized) {
+    case 'approve':
+      return 'APPROVE';
+    case 'comment':
+      return 'COMMENT';
+    case 'request-changes':
+    case 'request_changes':
+      return 'REQUEST_CHANGES';
+    default:
+      throw new ValidationError(
+        `Invalid --event: ${optionEvent}. Expected approve, comment, or request-changes.`,
+      );
+  }
+}
+
+function resolveCheckConclusion(
+  optionConclusion: string | undefined,
+): 'success' | 'failure' | 'neutral' | 'action_required' {
+  const raw = optionConclusion ?? 'neutral';
+  const normalized = raw.trim().toLowerCase();
+  switch (normalized) {
+    case 'success':
+    case 'failure':
+    case 'neutral':
+    case 'action_required':
+    case 'action-required':
+      return normalized.replace('-', '_') as 'success' | 'failure' | 'neutral' | 'action_required';
+    default:
+      throw new ValidationError(
+        `Invalid --conclusion: ${optionConclusion}. Expected success, failure, neutral, or action_required.`,
+      );
+  }
+}
+
+function formatReviewBody(review: PRReviewResult): string {
+  const lines: string[] = [
+    '## Codex OSS Automated Review',
+    '',
+    `**Verdict**: ${review.approved ? '✅ Approved' : '⚠️ Needs attention'}`,
+    `**Score**: ${review.score}/100`,
+    '',
+    `**Summary**: ${review.summary}`,
+    '',
+    '> Note: AI verdict is a signal; deterministic audit/size/key gates still apply.',
+  ];
+  if (review.ruleViolations.length > 0) {
+    lines.push('', '### Rule Violations');
+    for (const violation of review.ruleViolations) {
+      lines.push(`- ${violation}`);
+    }
+  }
+  if (review.suggestions.length > 0) {
+    lines.push('', '### Suggestions');
+    for (const suggestion of review.suggestions) {
+      lines.push(`- ${suggestion}`);
+    }
+  }
+  return lines.join('\n');
 }

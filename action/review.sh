@@ -40,6 +40,7 @@ fi
 AGENTS_FILE="${AGENTS_FILE:-AGENTS.md}"
 REVIEW_MODEL="${REVIEW_MODEL:-gpt-5.6}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-1000}"
+POST_REVIEW="${POST_REVIEW:-true}"
 
 set +e
 JSON_OUT="$(node "${ACTION_PATH}/bin/codex-oss.js" \
@@ -63,6 +64,15 @@ if [ "${STATUS}" -ne 0 ]; then
     FINDINGS="$(parse_field summary || echo review failed)"
   fi
   approved_out "false" "" "${FINDINGS}"
+  if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${PR_NUMBER:-}" ]; then
+    RESULT_FILE="${RUNNER_TEMP:-/tmp}/codex-review.json"
+    printf '{"approved":false,"score":0,"summary":"%s","ruleViolations":[],"suggestions":[]}' \
+      "${FINDINGS//\"/\\\"}" > "${RESULT_FILE}"
+    set +e
+    node "${ACTION_PATH}/bin/codex-oss.js" \
+      post review --result "${RESULT_FILE}" >/dev/null 2>&1
+    set -e
+  fi
   exit "${STATUS}"
 fi
 
@@ -70,3 +80,12 @@ APPROVED="$(parse_field approved)"
 SCORE="$(parse_field score)"
 VIOLATIONS="$(node --input-type=module -e "const o=JSON.parse(process.argv[1]); process.stdout.write([...(o.ruleViolations||[]),...(o.suggestions||[])].join('; '));" "${JSON_OUT}")"
 approved_out "${APPROVED}" "${SCORE}" "${VIOLATIONS}"
+
+if [ "${POST_REVIEW}" = "true" ] && [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${PR_NUMBER:-}" ]; then
+  RESULT_FILE="${RUNNER_TEMP:-/tmp}/codex-review.json"
+  printf '%s' "${JSON_OUT}" > "${RESULT_FILE}"
+  set +e
+  node "${ACTION_PATH}/bin/codex-oss.js" \
+    post review --result "${RESULT_FILE}" >/dev/null 2>&1
+  set -e
+fi

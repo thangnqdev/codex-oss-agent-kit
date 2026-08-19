@@ -11,6 +11,8 @@ describe('public contracts', () => {
     expect(lib.CodexClient).toBeDefined();
     expect(lib.AgentsParser).toBeDefined();
     expect(lib.SecurityAuditor).toBeDefined();
+    expect(lib.GitHubClient).toBeDefined();
+    expect(lib.parseRepoSlug).toBeDefined();
 
     const barrel = fs.readFileSync(path.resolve('src/index.ts'), 'utf-8');
     expect(barrel).not.toMatch(/from ['"]\.\/cli\//);
@@ -74,6 +76,8 @@ describe('public contracts', () => {
   it('exposes a drop-in Action with the required inputs and outputs', () => {
     const action = fs.readFileSync(path.resolve('action.yml'), 'utf-8');
     expect(action).toMatch(/openai-api-key:/);
+    expect(action).toMatch(/github-token:/);
+    expect(action).toMatch(/post-review:/);
     expect(action).toMatch(/model:/);
     expect(action).toMatch(/agents-file:/);
     expect(action).toMatch(/max-diff-size:/);
@@ -86,8 +90,11 @@ describe('public contracts', () => {
       'utf-8',
     );
     expect(workflow).not.toMatch(/--mock/);
+    expect(workflow).toMatch(/pull-requests: write/);
+    expect(workflow).toMatch(/github-token: \$\{\{ github\.token \}\}/);
     const script = fs.readFileSync(path.resolve('action/review.sh'), 'utf-8');
     expect(script).toContain('AI review: SKIPPED');
+    expect(script).toContain('post review');
     expect(script).not.toMatch(/--mock/);
   });
 

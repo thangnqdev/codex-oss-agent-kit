@@ -9,6 +9,10 @@ inputs:
   openai-api-key:
     description: 'OpenAI API key. If empty, the Action prints "AI review: SKIPPED" and does not mock-approve.'
     required: true
+  github-token:
+    description: 'GitHub token used to post the review back to the PR. Usually ${{ github.token }}. If empty, the Action only reports outputs.'
+    required: false
+    default: ''
   model:
     description: 'OpenAI model id (GPT-5.6 family by default)'
     required: false
@@ -21,6 +25,10 @@ inputs:
     description: 'Maximum diff lines per review request chunk'
     required: false
     default: '1000'
+  post-review:
+    description: 'Whether to post a PR review with the verdict (true) or only expose outputs (false)'
+    required: false
+    default: 'true'
 
 outputs:
   approved:
@@ -41,6 +49,9 @@ runs:
       shell: bash
       env:
         OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        POST_REVIEW: ${{ inputs.post-review }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
         REVIEW_MODEL: ${{ inputs.model }}
         AGENTS_FILE: ${{ inputs.agents-file }}
         MAX_DIFF_SIZE: ${{ inputs.max-diff-size }}

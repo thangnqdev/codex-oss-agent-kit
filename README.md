@@ -14,9 +14,10 @@ The [OpenAI Codex for Open Source](https://developers.openai.com/community/codex
 
 **`codex-oss-agent-kit`** gives maintainers a CLI and a reusable GitHub Action that can:
 
-1. **Review a pull request diff** against the full [`AGENTS.md`](./AGENTS.md) text via the **OpenAI Responses API** (default model `gpt-5.6`) with a structured JSON schema. The command prints an approval **signal**, score, summary, and `Reviewed lines: N/M`. It does **not** post GitHub inline review comments. The AI verdict is a signal, not the only pass/fail authority.
-2. **Triage an issue** by classifying category/complexity and recommending labels.
-3. **Audit a source file or unified diff** with static secret/unsafe-pattern checks (`sk-`, `sk-proj-`, `sk-svcacct-`, `ghp_`, `github_pat_`, `eval(`). Unified diffs are scanned on **added (`+`) lines only**. This is a regex scanner, not an OWASP engine or dependency CVE audit.
+1. **Review a pull request diff** against the full [`AGENTS.md`](./AGENTS.md) text via the **OpenAI Responses API** (default model `gpt-5.6`) with a structured JSON schema. The command prints an approval **signal**, score, summary, and `Reviewed lines: N/M`. The AI verdict is a signal, not the only pass/fail authority.
+2. **Post results back to GitHub** with `codex-oss post`: a PR review (approve/comment/request-changes), issue labels, or a completed check run.
+3. **Triage an issue** by classifying category/complexity and recommending labels.
+4. **Audit a source file or unified diff** with static secret/unsafe-pattern checks (`sk-`, `sk-proj-`, `sk-svcacct-`, `ghp_`, `github_pat_`, `eval(`). Unified diffs are scanned on **added (`+`) lines only**. This is a regex scanner, not an OWASP engine or dependency CVE audit.
 
 Live review/triage calls use a request timeout, bounded retries on 429/5xx, and structured outputs. Invalid or empty model JSON fails closed (does not auto-approve). Diffs larger than `maxDiffLines` are chunked so every line is reviewed, or the run fail-closes if a single hunk cannot fit. Chunks are reviewed with bounded concurrency (default 4 in flight) to keep large PRs fast without unbounded API fan-out. Diff text is treated as **untrusted data**.
 
@@ -29,7 +30,8 @@ Live review/triage calls use a request timeout, bounded retries on 429/5xx, and 
 - **Responses API client**: `gpt-5.6` by default (override via `.codex/config.json` `reviewSettings.model` or `--model`) with timeout, retry, and a JSON schema on the request.
 - **Full `AGENTS.md`**: The reviewer receives the entire file, including numbered quality-gate lines and prose rules.
 - **Config that is actually applied**: `.codex/config.json` is deep-merged; `model`, `maxDiffLines`, and `securityAuditOnPR` change runtime behavior. The config schema only contains keys that affect behavior.
-- **Drop-in GitHub Action**: `uses: thangnqdev/codex-oss-agent-kit@main` with inputs `openai-api-key`, `model`, `agents-file`, `max-diff-size` and outputs `approved`, `score`, `findings`.
+- **Drop-in GitHub Action**: `uses: thangnqdev/codex-oss-agent-kit@main` with inputs `openai-api-key`, `github-token`, `post-review`, `model`, `agents-file`, `max-diff-size` and outputs `approved`, `score`, `findings`. With a token, the Action posts the verdict as a PR review.
+- **GitHub integration**: `GitHubClient` posts PR reviews, issue labels, and check runs with timeout, bounded retries on 429/5xx, and a `GitHubApiError` domain error.
 - **Type-safe core**: TypeScript strict mode with `noUncheckedIndexedAccess`. Tests run with Vitest and enforce 80% line/statement/branch/function coverage **per file**. ESLint (type-aware) and Prettier are enforced in CI.
 
 ---
@@ -90,6 +92,29 @@ codex-oss --mock triage --title "Bug: App crashes on launch" --body "Steps to re
 codex-oss audit --file src/core/codex-client.ts
 ```
 
+### 4. Post Results Back to GitHub
+
+Requires `GITHUB_TOKEN` (and `GITHUB_REPOSITORY`, or pass `--repo`). `post review` emits an approve/comment/request-changes verdict from a review JSON file (or stdin via `--result -`):
+
+```bash
+codex-oss review --diff pr.diff --format json > review.json
+codex-oss post review --repo owner/name --pr 42 --result review.json
+echo '{"approved":false,"score":40,"summary":"x","ruleViolations":[],"suggestions":[]}' \
+  | codex-oss post review --repo owner/name --pr 42 --result -
+```
+
+`post labels` adds labels from a comma-separated list (e.g. labels the triager recommended):
+
+```bash
+codex-oss post labels --repo owner/name --issue 17 --labels bug,triage-needed
+```
+
+`post check` creates a completed check run so the verdict is visible in the PR's Checks tab:
+
+```bash
+codex-oss post check --repo owner/name --sha "$GITHUB_SHA" --conclusion success --summary "All clean."
+```
+
 ---
 
 ## Drop-in GitHub Action
@@ -97,6 +122,9 @@ codex-oss audit --file src/core/codex-client.ts
 ```yaml
 name: PR review
 on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
 jobs:
   review:
     runs-on: ubuntu-latest
@@ -107,12 +135,13 @@ jobs:
       - uses: thangnqdev/codex-oss-agent-kit@main
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ github.token }}
           model: gpt-5.6
           agents-file: AGENTS.md
           max-diff-size: '1000'
 ```
 
-If `openai-api-key` is empty (typical for fork PRs, where repository secrets are not available), the Action prints `AI review: SKIPPED` and sets `approved=false`. That is not a mock pass.
+If `openai-api-key` is empty (typical for fork PRs, where repository secrets are not available), the Action prints `AI review: SKIPPED` and sets `approved=false`. That is not a mock pass. When `github-token` and `post-review` are set, the Action posts the verdict as a PR review; posting failure never flips the gate verdict.
 
 ---
 
@@ -127,14 +156,14 @@ If `openai-api-key` is empty (typical for fork PRs, where repository secrets are
             ▼                          ▼                          ▼
    ┌─────────────────┐       ┌──────────────────┐       ┌──────────────────┐
    │   PR Analyzer   │       │  Issue Triager   │       │ Security Auditor │
-   └────────┬────────┘       └────────┬─────────┘       │ (+ lines of diffs)│
-            │                         │                 └──────────────────┘
-            └─────────────────────────┼──────────────────────────┘
-                                      ▼
-                        ┌──────────────────────────┐
-                        │       CodexClient        │
-                        │   OpenAI Responses API   │
-                        └──────────────────────────┘
+   └────────┬────────┘       └────────┬─────────┘       └──────────────────┘
+            │                         │
+            └─────────────────────────┼──────────────────────────┐
+                                      ▼                          ▼
+                        ┌──────────────────────────┐   ┌──────────────────┐
+                        │       CodexClient        │   │   GitHubClient   │
+                        │   OpenAI Responses API   │   │     GitHub API   │
+                        └──────────────────────────┘   └──────────────────┘
 ```
 
 The library entry (`src/index.ts`) exports core + types only. The CLI is the `codex-oss` bin.

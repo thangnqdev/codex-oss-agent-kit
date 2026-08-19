@@ -7,6 +7,9 @@ on:
 jobs:
   codex-review:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -16,5 +19,6 @@ jobs:
         uses: ./
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ github.token }}
           agents-file: AGENTS.md
           max-diff-size: '1000'

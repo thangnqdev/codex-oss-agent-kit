@@ -23,3 +23,15 @@ export class SecurityAuditError extends Error {
     this.name = 'SecurityAuditError';
   }
 }
+
+export class GitHubApiError extends Error {
+  public readonly status: number | undefined;
+  public readonly retryable: boolean;
+
+  constructor(message: string, status?: number, retryable: boolean = false) {
+    super(message);
+    this.name = 'GitHubApiError';
+    this.status = status;
+    this.retryable = retryable;
+  }
+}

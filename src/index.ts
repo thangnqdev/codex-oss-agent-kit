@@ -9,6 +9,7 @@ export * from './core/review-chunks.js';
 export * from './core/review-prompt.js';
 export * from './core/review-run.js';
 export * from './core/codex-client.js';
+export * from './core/github-client.js';
 export * from './core/agents-parser.js';
 export * from './core/pr-analyzer.js';
 export * from './core/issue-triager.js';

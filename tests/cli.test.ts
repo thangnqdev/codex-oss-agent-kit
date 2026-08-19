@@ -407,3 +407,334 @@ describe('CLI Commands', () => {
     expect(io.out()).not.toContain('Approved: YES');
   });
 });
+
+describe('CLI post command', () => {
+  interface CapturedCall {
+    readonly url: string;
+    readonly init: RequestInit;
+  }
+
+  let captured: CapturedCall[] = [];
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    captured = [];
+  });
+
+  function stubFetch(status: number = 200): void {
+    globalThis.fetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+      captured.push({
+        url: typeof input === 'string' ? input : input.toString(),
+        init: init ?? {},
+      });
+      return new Response('{}', {
+        status,
+        statusText: status === 200 ? 'OK' : 'Error',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+  }
+
+  function envWithGitHub(): NodeJS.ProcessEnv {
+    return {
+      ...envWithoutKey(),
+      GITHUB_TOKEN: 'gh-test-token',
+      GITHUB_REPOSITORY: 'owner/name',
+    };
+  }
+
+  function writeReviewFile(dir: string, approved: boolean): string {
+    const reviewPath = path.join(dir, 'review.json');
+    fs.writeFileSync(
+      reviewPath,
+      JSON.stringify({
+        approved,
+        score: approved ? 95 : 40,
+        summary: approved ? 'LGTM' : 'Needs work',
+        ruleViolations: approved ? [] : ['missing tests'],
+        suggestions: ['add tests'],
+      }),
+    );
+    return reviewPath;
+  }
+
+  it('posts an approved review as APPROVE event', async () => {
+    stubFetch();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = writeReviewFile(dir, true);
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      ['post', 'review', '--repo', 'owner/name', '--pr', '42', '--result', reviewPath],
+      io,
+    );
+    expect(code).toBe(0);
+    expect(io.out()).toContain('Posted APPROVE review on PR #42');
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.url).toBe('https://api.github.com/repos/owner/name/pulls/42/reviews');
+    const body = JSON.parse(String(captured[0]!.init.body)) as Record<string, unknown>;
+    expect(body['event']).toBe('APPROVE');
+    expect(String(body['body'])).toContain('LGTM');
+  });
+
+  it('posts a rejected review as COMMENT event and supports --event override', async () => {
+    stubFetch();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = writeReviewFile(dir, false);
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      [
+        'post',
+        'review',
+        '--repo',
+        'owner/name',
+        '--pr',
+        '7',
+        '--result',
+        reviewPath,
+        '--event',
+        'request-changes',
+      ],
+      io,
+    );
+    expect(code).toBe(0);
+    const body = JSON.parse(String(captured[0]!.init.body)) as Record<string, unknown>;
+    expect(body['event']).toBe('REQUEST_CHANGES');
+    expect(String(body['body'])).toContain('missing tests');
+  });
+
+  it('accepts explicit approve and comment events and tolerates missing arrays', async () => {
+    stubFetch();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = path.join(dir, 'minimal.json');
+    fs.writeFileSync(
+      reviewPath,
+      JSON.stringify({ approved: false, score: 50, summary: 'Minimal payload' }),
+    );
+    const io = createCapturedIo(envWithGitHub());
+    const approveCode = await runCli(
+      [
+        'post',
+        'review',
+        '--repo',
+        'owner/name',
+        '--pr',
+        '1',
+        '--result',
+        reviewPath,
+        '--event',
+        'approve',
+      ],
+      io,
+    );
+    expect(approveCode).toBe(0);
+    const approveBody = JSON.parse(String(captured[0]!.init.body)) as Record<string, unknown>;
+    expect(approveBody['event']).toBe('APPROVE');
+    expect(String(approveBody['body'])).toContain('Minimal payload');
+    expect(String(approveBody['body'])).not.toContain('Rule Violations');
+
+    const io2 = createCapturedIo(envWithGitHub());
+    const commentCode = await runCli(
+      [
+        'post',
+        'review',
+        '--repo',
+        'owner/name',
+        '--pr',
+        '2',
+        '--result',
+        reviewPath,
+        '--event',
+        'comment',
+      ],
+      io2,
+    );
+    expect(commentCode).toBe(0);
+    const commentBody = JSON.parse(String(captured[captured.length - 1]!.init.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(commentBody['event']).toBe('COMMENT');
+  });
+
+  it('posts in JSON format when --format json is set', async () => {
+    stubFetch();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = writeReviewFile(dir, true);
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      [
+        '--format',
+        'json',
+        'post',
+        'review',
+        '--repo',
+        'owner/name',
+        '--pr',
+        '3',
+        '--result',
+        reviewPath,
+      ],
+      io,
+    );
+    expect(code).toBe(0);
+    expect(io.out()).toContain('"posted":true');
+    expect(io.out()).not.toContain('Posted APPROVE review on PR #3');
+  });
+
+  it('adds labels from a comma-separated list', async () => {
+    stubFetch();
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      ['post', 'labels', '--repo', 'owner/name', '--issue', '9', '--labels', 'bug, triage-needed'],
+      io,
+    );
+    expect(code).toBe(0);
+    expect(io.out()).toContain('Added labels to #9: bug, triage-needed');
+    expect(captured[0]!.url).toBe('https://api.github.com/repos/owner/name/issues/9/labels');
+    const body = JSON.parse(String(captured[0]!.init.body)) as { labels: string[] };
+    expect(body.labels).toEqual(['bug', 'triage-needed']);
+  });
+
+  it('posts a check run with the given conclusion', async () => {
+    stubFetch();
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      [
+        'post',
+        'check',
+        '--repo',
+        'owner/name',
+        '--sha',
+        'deadbeef',
+        '--name',
+        'codex-review',
+        '--conclusion',
+        'success',
+        '--title',
+        'Codex OSS Review',
+        '--summary',
+        'All clean.',
+      ],
+      io,
+    );
+    expect(code).toBe(0);
+    expect(io.out()).toContain('Posted check run "codex-review" (success)');
+    expect(captured[0]!.url).toBe('https://api.github.com/repos/owner/name/check-runs');
+    const body = JSON.parse(String(captured[0]!.init.body)) as Record<string, unknown>;
+    expect(body['conclusion']).toBe('success');
+    expect(body['head_sha']).toBe('deadbeef');
+  });
+
+  it('fails when GITHUB_TOKEN is missing', async () => {
+    const io = createCapturedIo(envWithoutKey());
+    const code = await runCli(
+      ['post', 'labels', '--repo', 'owner/name', '--issue', '1', '--labels', 'bug'],
+      io,
+    );
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/GITHUB_TOKEN/);
+  });
+
+  it('fails when the repo is missing', async () => {
+    const io = createCapturedIo({
+      ...envWithoutKey(),
+      GITHUB_TOKEN: 'gh-test-token',
+    });
+    const code = await runCli(['post', 'labels', '--issue', '1', '--labels', 'bug'], io);
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/--repo|GITHUB_REPOSITORY/);
+  });
+
+  it('fails on an invalid review payload', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const badPath = path.join(dir, 'bad.json');
+    fs.writeFileSync(badPath, 'not json');
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      ['post', 'review', '--repo', 'owner/name', '--pr', '1', '--result', badPath],
+      io,
+    );
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/valid JSON/);
+  });
+
+  it('fails when the review payload is not a JSON object or lacks required fields', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const nullPath = path.join(dir, 'null.json');
+    fs.writeFileSync(nullPath, 'null');
+    const io = createCapturedIo(envWithGitHub());
+    const nullCode = await runCli(
+      ['post', 'review', '--repo', 'owner/name', '--pr', '1', '--result', nullPath],
+      io,
+    );
+    expect(nullCode).toBe(1);
+    expect(io.err()).toMatch(/JSON object/);
+
+    const fieldsPath = path.join(dir, 'fields.json');
+    fs.writeFileSync(fieldsPath, JSON.stringify({ approved: 'yes', score: 'hi', summary: 5 }));
+    const io2 = createCapturedIo(envWithGitHub());
+    const fieldsCode = await runCli(
+      ['post', 'review', '--repo', 'owner/name', '--pr', '1', '--result', fieldsPath],
+      io2,
+    );
+    expect(fieldsCode).toBe(1);
+    expect(io2.err()).toMatch(/approved|score|summary/);
+  });
+
+  it('fails when --pr is missing', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = writeReviewFile(dir, true);
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      ['post', 'review', '--repo', 'owner/name', '--result', reviewPath],
+      io,
+    );
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/--pr/);
+  });
+
+  it('fails on invalid --event and --conclusion values', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = writeReviewFile(dir, true);
+    const io = createCapturedIo(envWithGitHub());
+    const badEvent = await runCli(
+      [
+        'post',
+        'review',
+        '--repo',
+        'owner/name',
+        '--pr',
+        '1',
+        '--result',
+        reviewPath,
+        '--event',
+        'banana',
+      ],
+      io,
+    );
+    expect(badEvent).toBe(1);
+    expect(io.err()).toMatch(/--event/);
+
+    const io2 = createCapturedIo(envWithGitHub());
+    const badConclusion = await runCli(
+      ['post', 'check', '--repo', 'owner/name', '--sha', 'x', '--conclusion', 'banana'],
+      io2,
+    );
+    expect(badConclusion).toBe(1);
+    expect(io2.err()).toMatch(/--conclusion/);
+  });
+
+  it('propagates GitHubApiError failures as exit 1', async () => {
+    stubFetch(403);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-post-'));
+    const reviewPath = writeReviewFile(dir, true);
+    const io = createCapturedIo(envWithGitHub());
+    const code = await runCli(
+      ['post', 'review', '--repo', 'owner/name', '--pr', '1', '--result', reviewPath],
+      io,
+    );
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/GitHubApiError/);
+  });
+});
