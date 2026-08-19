@@ -32,7 +32,7 @@ describe('AgentsParser', () => {
   it('returns default config if config file does not exist', () => {
     const config = AgentsParser.parseConfigFile('non-existent-config.json');
     expect(config.program).toBe('Codex for Open Source');
-    expect(config.rules.requireCoverageFloor).toBe(80);
+    expect(config.rules.securityAuditOnPR).toBe(true);
     expect(config.reviewSettings.maxDiffLines).toBe(1000);
   });
 
@@ -40,23 +40,23 @@ describe('AgentsParser', () => {
     const configPath = path.resolve(process.cwd(), '.codex/config.json');
     const config = AgentsParser.parseConfigFile(configPath);
     expect(config.version).toBe('1.0.0');
-    expect(config.rules.enforceStrictTypes).toBe(true);
+    expect(config.rules.securityAuditOnPR).toBe(true);
   });
 
   it('deep-merges partial nested objects and keeps defaults', () => {
     const configPath = path.join(os.tmpdir(), `codex-partial-${Date.now()}.json`);
-    fs.writeFileSync(configPath, JSON.stringify({
-      rules: { securityAuditOnPR: false },
-      reviewSettings: { model: 'gpt-4o-mini' },
-    }));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: { securityAuditOnPR: false },
+        reviewSettings: { model: 'gpt-4o-mini' },
+      }),
+    );
 
     const config = AgentsParser.parseConfigFile(configPath);
     expect(config.rules.securityAuditOnPR).toBe(false);
-    expect(config.rules.requireCoverageFloor).toBe(80);
-    expect(config.rules.enforceStrictTypes).toBe(true);
     expect(config.reviewSettings.model).toBe('gpt-4o-mini');
     expect(config.reviewSettings.maxDiffLines).toBe(1000);
-    expect(config.reviewSettings.commentOnPass).toBe(false);
   });
 
   it('throws ValidationError for invalid JSON config', () => {

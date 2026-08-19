@@ -22,7 +22,12 @@ export function splitUnifiedDiffHunks(diff: string): readonly string[] {
   };
 
   for (const line of lines) {
-    if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+    if (
+      line.startsWith('diff ') ||
+      line.startsWith('index ') ||
+      line.startsWith('--- ') ||
+      line.startsWith('+++ ')
+    ) {
       if (current.length > 0) {
         flush();
         header = [];
@@ -57,7 +62,9 @@ export function chunkDiff(diff: string, maxDiffLines: number): DiffChunks {
     return { chunks: [], totalLines: 0, reviewedLines: 0 };
   }
 
-  const units = isUnifiedDiff(diff) ? [...splitUnifiedDiffHunks(diff)] : windowPlainLines(diff, maxDiffLines);
+  const units = isUnifiedDiff(diff)
+    ? [...splitUnifiedDiffHunks(diff)]
+    : windowPlainLines(diff, maxDiffLines);
 
   const chunks: string[] = [];
   let bucket: string[] = [];

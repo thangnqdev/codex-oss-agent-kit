@@ -14,51 +14,55 @@ describe('config helpers', () => {
       rules: { securityAuditOnPR: false },
     });
     expect(merged.rules.securityAuditOnPR).toBe(false);
-    expect(merged.rules.requireCoverageFloor).toBe(80);
     expect(merged.reviewSettings.maxDiffLines).toBe(1000);
   });
 
   it('rejects non-object nested overrides', () => {
-    expect(() => deepMergeConfig(getDefaultConfig(), {
-      rules: 'strict' as unknown as { securityAuditOnPR: boolean },
-    })).toThrow(ValidationError);
-    expect(() => deepMergeConfig(getDefaultConfig(), {
-      reviewSettings: null as unknown as { model: string },
-    })).toThrow(ValidationError);
+    expect(() =>
+      deepMergeConfig(getDefaultConfig(), {
+        rules: 'strict' as unknown as { securityAuditOnPR: boolean },
+      }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      deepMergeConfig(getDefaultConfig(), {
+        reviewSettings: null as unknown as { model: string },
+      }),
+    ).toThrow(ValidationError);
   });
 
   it('rejects invalid field types after merge', () => {
     expect(() => deepMergeConfig(getDefaultConfig(), { version: '' })).toThrow(/version/i);
     expect(() => deepMergeConfig(getDefaultConfig(), { program: '' })).toThrow(/program/i);
-    expect(() => deepMergeConfig(getDefaultConfig(), {
-      rules: { requireCoverageFloor: Number.NaN },
-    })).toThrow(/requireCoverageFloor/i);
-    expect(() => deepMergeConfig(getDefaultConfig(), {
-      reviewSettings: { maxDiffLines: 0 },
-    })).toThrow(/maxDiffLines/i);
-    expect(() => deepMergeConfig(getDefaultConfig(), {
-      reviewSettings: { model: '' },
-    })).toThrow(/model/i);
+    expect(() =>
+      deepMergeConfig(getDefaultConfig(), {
+        rules: { securityAuditOnPR: 'yes' as unknown as boolean },
+      }),
+    ).toThrow(/securityAuditOnPR/i);
+    expect(() =>
+      deepMergeConfig(getDefaultConfig(), {
+        reviewSettings: { maxDiffLines: 0 },
+      }),
+    ).toThrow(/maxDiffLines/i);
+    expect(() =>
+      deepMergeConfig(getDefaultConfig(), {
+        reviewSettings: { model: '' },
+      }),
+    ).toThrow(/model/i);
   });
 
-  it('validateConfig rejects mistyped booleans', () => {
+  it('validateConfig rejects mistyped booleans and numbers', () => {
     const config = getDefaultConfig();
-    expect(() => validateConfig({
-      ...config,
-      rules: { ...config.rules, enforceStrictTypes: 'yes' as unknown as boolean },
-    })).toThrow(/enforceStrictTypes/i);
-    expect(() => validateConfig({
-      ...config,
-      rules: { ...config.rules, autoTriageIssues: 'yes' as unknown as boolean },
-    })).toThrow(/autoTriageIssues/i);
-    expect(() => validateConfig({
-      ...config,
-      reviewSettings: { ...config.reviewSettings, commentOnPass: 'yes' as unknown as boolean },
-    })).toThrow(/commentOnPass/i);
-    expect(() => validateConfig({
-      ...config,
-      rules: { ...config.rules, securityAuditOnPR: 'yes' as unknown as boolean },
-    })).toThrow(/securityAuditOnPR/i);
+    expect(() =>
+      validateConfig({
+        ...config,
+        rules: { ...config.rules, securityAuditOnPR: 'yes' as unknown as boolean },
+      }),
+    ).toThrow(/securityAuditOnPR/i);
+    expect(() =>
+      validateConfig({
+        ...config,
+        reviewSettings: { ...config.reviewSettings, maxDiffLines: Number.NaN },
+      }),
+    ).toThrow(/maxDiffLines/i);
   });
-
 });

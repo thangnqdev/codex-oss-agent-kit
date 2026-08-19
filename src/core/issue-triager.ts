@@ -21,7 +21,8 @@ export class IssueTriager {
       };
     }
 
-    const systemPrompt = 'You are an automated issue triager for Open Source maintainers. Return an IssueTriageResult object.';
+    const systemPrompt =
+      'You are an automated issue triager for Open Source maintainers. Return an IssueTriageResult object.';
     const userPrompt = `Issue Title: ${title}\nIssue Body:\n${body}`;
 
     const rawResponse = await this.client.generateCompletion(

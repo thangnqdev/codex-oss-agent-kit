@@ -107,15 +107,10 @@ describe('CLI Commands', () => {
     };
 
     const io = createCapturedIo();
-    const code = await runCli([
-      '--api-key',
-      'sk-test-key',
-      '--config',
-      configPath,
-      'review',
-      '--diff',
-      diffPath,
-    ], io);
+    const code = await runCli(
+      ['--api-key', 'sk-test-key', '--config', configPath, 'review', '--diff', diffPath],
+      io,
+    );
 
     expect(code).toBe(0);
     expect(url).toBe('https://api.openai.com/v1/responses');
@@ -149,11 +144,31 @@ describe('CLI Commands', () => {
 
   it('triages an issue in mock mode', async () => {
     const io = createCapturedIo();
-    const code = await runCli(['--mock', 'triage', '--title', 'Bug: crash', '--body', 'Steps to reproduce'], io);
+    const code = await runCli(
+      ['--mock', 'triage', '--title', 'Bug: crash', '--body', 'Steps to reproduce'],
+      io,
+    );
     expect(code).toBe(0);
     expect(io.out()).toContain('Category:');
     expect(io.out()).toContain('Complexity:');
     expect(io.out()).toContain('Summary:');
+  });
+
+  it('triages an issue as JSON with --format json', async () => {
+    const io = createCapturedIo();
+    const code = await runCli(
+      ['--mock', '--format', 'json', 'triage', '--title', 'Bug: crash', '--body', 'Steps'],
+      io,
+    );
+    expect(code).toBe(0);
+    const payload = JSON.parse(io.out()) as {
+      category: string;
+      complexity: string;
+      recommendedLabels: string[];
+    };
+    expect(payload.category).toBe('bug');
+    expect(payload.complexity).toBe('medium');
+    expect(Array.isArray(payload.recommendedLabels)).toBe(true);
   });
 
   it('fails triage in live mode without a key', async () => {
@@ -203,6 +218,114 @@ describe('CLI Commands', () => {
     expect(io.out()).toContain('Findings Count: 0');
   });
 
+  it('audits as JSON with --format json and still exits non-zero on findings', async () => {
+    const io = createCapturedIo();
+    const code = await runCli(['--format', 'json', 'audit', '--file', secretFile], io);
+    expect(code).toBe(1);
+    const payload = JSON.parse(io.out()) as {
+      passed: boolean;
+      riskScore: number;
+      findings: Array<{ ruleId: string }>;
+    };
+    expect(payload.passed).toBe(false);
+    expect(payload.riskScore).toBeGreaterThan(0);
+    expect(payload.findings.length).toBeGreaterThan(0);
+  });
+
+  it('prints the package version with --version', async () => {
+    const io = createCapturedIo();
+    const code = await runCli(['--version'], io);
+    expect(code).toBe(0);
+    expect(io.out().trim()).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('applies --model and --max-diff-lines CLI overrides', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-overrides-'));
+    const diffPath = path.join(dir, 'small.diff');
+    fs.writeFileSync(diffPath, ['line-one', 'line-two', 'line-three', 'line-four'].join('\n'));
+
+    const bodies: string[] = [];
+    globalThis.fetch = async (_input, init) => {
+      bodies.push(String(init?.body ?? ''));
+      return jsonCompletionResponse(approvedReviewJson());
+    };
+
+    const io = createCapturedIo();
+    const code = await runCli(
+      [
+        '--api-key',
+        'sk-test-key',
+        '--model',
+        'gpt-4o-mini',
+        '--max-diff-lines',
+        '2',
+        '--config',
+        path.join(dir, 'missing-config.json'),
+        'review',
+        '--diff',
+        diffPath,
+      ],
+      io,
+    );
+
+    expect(code).toBe(0);
+    expect(bodies.length).toBe(2);
+    const payload = JSON.parse(bodies[0] ?? '{}') as { model: string };
+    expect(payload.model).toBe('gpt-4o-mini');
+  });
+
+  it('ignores a blank --model override and keeps the config model', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-blank-model-'));
+    const diffPath = path.join(dir, 'small.diff');
+    fs.writeFileSync(diffPath, 'single-line');
+
+    let model = '';
+    globalThis.fetch = async (_input, init) => {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { model: string };
+      model = payload.model;
+      return jsonCompletionResponse(approvedReviewJson());
+    };
+
+    const io = createCapturedIo();
+    const code = await runCli(
+      [
+        '--api-key',
+        'sk-test-key',
+        '--model',
+        '   ',
+        '--config',
+        path.join(dir, 'missing-config.json'),
+        'review',
+        '--diff',
+        diffPath,
+      ],
+      io,
+    );
+
+    expect(code).toBe(0);
+    expect(model).toBe('gpt-5.6');
+  });
+
+  it('rejects a non-numeric --max-diff-lines value', async () => {
+    const io = createCapturedIo();
+    const code = await runCli(
+      ['--mock', '--max-diff-lines', 'not-a-number', 'review', '--diff', sampleDiff],
+      io,
+    );
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/--max-diff-lines must be a positive number/i);
+  });
+
+  it('rejects a zero --max-diff-lines value', async () => {
+    const io = createCapturedIo();
+    const code = await runCli(
+      ['--mock', '--max-diff-lines', '0', 'review', '--diff', sampleDiff],
+      io,
+    );
+    expect(code).toBe(1);
+    expect(io.err()).toMatch(/--max-diff-lines must be a positive number/i);
+  });
+
   it('returns non-zero for an unknown command', async () => {
     const io = createCapturedIo();
     const code = await runCli(['not-a-command'], io);
@@ -234,15 +357,10 @@ describe('CLI Commands', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-noaudit-'));
     const configPath = path.join(dir, 'config.json');
     fs.writeFileSync(configPath, JSON.stringify({ rules: { securityAuditOnPR: false } }));
-    const code = await runCli([
-      '--api-key',
-      'sk-test-key',
-      '--config',
-      configPath,
-      'review',
-      '--diff',
-      injected,
-    ], io);
+    const code = await runCli(
+      ['--api-key', 'sk-test-key', '--config', configPath, 'review', '--diff', injected],
+      io,
+    );
     expect(code).toBe(1);
     expect(io.out()).toContain('Approved: NO');
     expect(io.out()).not.toContain('Summary: injected');
@@ -252,10 +370,13 @@ describe('CLI Commands', () => {
     const oversize = path.resolve(process.cwd(), 'tests/fixtures/oversize.diff');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-oversize-'));
     const configPath = path.join(dir, 'config.json');
-    fs.writeFileSync(configPath, JSON.stringify({
-      reviewSettings: { maxDiffLines: 8 },
-      rules: { securityAuditOnPR: false },
-    }));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        reviewSettings: { maxDiffLines: 8 },
+        rules: { securityAuditOnPR: false },
+      }),
+    );
     const io = createCapturedIo();
     const code = await runCli(['--mock', '--config', configPath, 'review', '--diff', oversize], io);
     expect(code).toBe(0);
@@ -268,11 +389,17 @@ describe('CLI Commands', () => {
     const diffPath = path.join(dir, 'huge.hunk.diff');
     const configPath = path.join(dir, 'config.json');
     const body = Array.from({ length: 20 }, (_, i) => `+const n${i} = ${i};`).join('\n');
-    fs.writeFileSync(diffPath, ['diff --git a/x.ts b/x.ts', '--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1,20 @@', body].join('\n'));
-    fs.writeFileSync(configPath, JSON.stringify({
-      reviewSettings: { maxDiffLines: 5 },
-      rules: { securityAuditOnPR: false },
-    }));
+    fs.writeFileSync(
+      diffPath,
+      ['diff --git a/x.ts b/x.ts', '--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1,20 @@', body].join('\n'),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        reviewSettings: { maxDiffLines: 5 },
+        rules: { securityAuditOnPR: false },
+      }),
+    );
     const io = createCapturedIo();
     const code = await runCli(['--mock', '--config', configPath, 'review', '--diff', diffPath], io);
     expect(code).toBe(1);

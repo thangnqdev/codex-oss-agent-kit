@@ -130,7 +130,8 @@ describe('CodexClient', () => {
     const client = new CodexClient({
       apiKey: 'sk-test',
       mockMode: false,
-      fetchImpl: async () => new Response('not-json', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      fetchImpl: async () =>
+        new Response('not-json', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     });
 
     await expect(client.generateCompletion('hello')).rejects.toBeInstanceOf(ValidationError);

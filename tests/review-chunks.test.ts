@@ -16,7 +16,18 @@ describe('diff chunking', () => {
   });
 
   it('fail-closes when a single hunk is larger than the limit', () => {
-    const hunk = ['diff --git a/x.ts b/x.ts', '--- a/x.ts', '+++ b/x.ts', '@@ -0,0 +1,6 @@', '+a', '+b', '+c', '+d', '+e', '+f'].join('\n');
+    const hunk = [
+      'diff --git a/x.ts b/x.ts',
+      '--- a/x.ts',
+      '+++ b/x.ts',
+      '@@ -0,0 +1,6 @@',
+      '+a',
+      '+b',
+      '+c',
+      '+d',
+      '+e',
+      '+f',
+    ].join('\n');
     expect(() => chunkDiff(hunk, 4)).toThrow(ValidationError);
     expect(() => chunkDiff(hunk, 4)).toThrow(/Reviewed lines: 0\//);
   });

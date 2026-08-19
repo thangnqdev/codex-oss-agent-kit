@@ -33,6 +33,18 @@ describe('public contracts', () => {
     expect(pkg.scripts.prepare).toBeDefined();
     expect(pkg.scripts.test).toContain('--coverage');
     expect(pkg.scripts.start).toContain('bin/codex-oss.js');
+    expect(pkg.scripts.lint).toBeDefined();
+    expect(pkg.scripts.format).toBeDefined();
+  });
+
+  it('enforces the coverage floor per file, not only in aggregate', () => {
+    const vitestConfig = fs.readFileSync(path.resolve('vitest.config.ts'), 'utf-8');
+    expect(vitestConfig).toContain('perFile: true');
+  });
+
+  it('enables noUncheckedIndexedAccess in tsconfig', () => {
+    const tsconfig = fs.readFileSync(path.resolve('tsconfig.json'), 'utf-8');
+    expect(tsconfig).toContain('"noUncheckedIndexedAccess": true');
   });
 
   it('security workflow audits src/** and not only the barrel', () => {
@@ -53,7 +65,9 @@ describe('public contracts', () => {
     expect(readme).not.toMatch(/Compliance Matrix/i);
     expect(readme).not.toMatch(/compliant with OpenAI Codex for OSS criteria/i);
     expect(readme).toMatch(/Repository readiness \/ quality checklist for Codex workflows/i);
-    expect(security).not.toMatch(/All PRs are audited for credential leaks, dependency vulnerabilities/i);
+    expect(security).not.toMatch(
+      /All PRs are audited for credential leaks, dependency vulnerabilities/i,
+    );
     expect(readme).toMatch(/80%/);
   });
 
@@ -67,7 +81,10 @@ describe('public contracts', () => {
     expect(action).toMatch(/score:/);
     expect(action).toMatch(/findings:/);
 
-    const workflow = fs.readFileSync(path.resolve('.github/workflows/codex-pr-review.yml'), 'utf-8');
+    const workflow = fs.readFileSync(
+      path.resolve('.github/workflows/codex-pr-review.yml'),
+      'utf-8',
+    );
     expect(workflow).not.toMatch(/--mock/);
     const script = fs.readFileSync(path.resolve('action/review.sh'), 'utf-8');
     expect(script).toContain('AI review: SKIPPED');

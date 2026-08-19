@@ -26,9 +26,39 @@ describe('Responses API request builder', () => {
 
   it('extracts output_text from a Responses payload', () => {
     expect(extractResponsesText({ output_text: 'hello' })).toBe('hello');
-    expect(extractResponsesText({
-      output: [{ type: 'message', content: [{ type: 'output_text', text: 'from-output' }] }],
-    })).toBe('from-output');
+    expect(
+      extractResponsesText({
+        output: [{ type: 'message', content: [{ type: 'output_text', text: 'from-output' }] }],
+      }),
+    ).toBe('from-output');
     expect(extractResponsesText({ output: [] })).toBeUndefined();
+  });
+
+  it('skips malformed output items and parts defensively', () => {
+    expect(extractResponsesText(null)).toBeUndefined();
+    expect(extractResponsesText('string')).toBeUndefined();
+    expect(extractResponsesText([1, 2])).toBeUndefined();
+    expect(extractResponsesText({ output_text: '   ' })).toBeUndefined();
+    expect(extractResponsesText({ output: 'not-array' })).toBeUndefined();
+    expect(
+      extractResponsesText({
+        output: [null, 'scalar', [1], { content: null }, { content: '   ' }],
+      }),
+    ).toBeUndefined();
+    expect(
+      extractResponsesText({
+        output: [{ content: 'plain-string-content' }],
+      }),
+    ).toBe('plain-string-content');
+    expect(
+      extractResponsesText({
+        output: [{ content: [null, 'scalar', [1], { text: '   ' }, { text: 'kept' }] }],
+      }),
+    ).toBe('kept');
+    expect(
+      extractResponsesText({
+        output: [{ content: 'one' }, { content: [{ text: 'two' }] }],
+      }),
+    ).toBe('onetwo');
   });
 });

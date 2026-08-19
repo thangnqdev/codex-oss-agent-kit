@@ -31,20 +31,25 @@ describe('IssueTriager', () => {
     });
     const triager = new IssueTriager(client);
 
-    await expect(triager.triageIssue('Bug: crash', 'details')).rejects.toBeInstanceOf(ValidationError);
+    await expect(triager.triageIssue('Bug: crash', 'details')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
   });
 
   it('fails closed on an invalid category', async () => {
     const client = new CodexClient({
       apiKey: 'sk-test',
       mockMode: false,
-      fetchImpl: async () => jsonCompletionResponse(JSON.stringify({
-        category: 'unknown',
-        complexity: 'low',
-        recommendedLabels: ['x'],
-        hasReproductionSteps: false,
-        summary: 'nope',
-      })),
+      fetchImpl: async () =>
+        jsonCompletionResponse(
+          JSON.stringify({
+            category: 'unknown',
+            complexity: 'low',
+            recommendedLabels: ['x'],
+            hasReproductionSteps: false,
+            summary: 'nope',
+          }),
+        ),
     });
     const triager = new IssueTriager(client);
 

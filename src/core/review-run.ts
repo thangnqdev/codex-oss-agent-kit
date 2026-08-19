@@ -1,4 +1,5 @@
 import { CodexClient } from './codex-client.js';
+import { DEFAULT_REVIEW_CONCURRENCY, mapWithConcurrency } from './concurrency.js';
 import { ValidationError } from './errors.js';
 import { chunkDiff } from './review-chunks.js';
 import { buildReviewPrompt } from './review-prompt.js';
@@ -11,6 +12,7 @@ export interface ReviewRunInput {
   readonly agentsText: string;
   readonly maxDiffLines: number;
   readonly client: CodexClient;
+  readonly concurrency?: number;
 }
 
 export interface ReviewRunOutput extends PRReviewResult {
@@ -35,20 +37,16 @@ export async function runReview(input: ReviewRunInput): Promise<ReviewRunOutput>
     };
   }
 
-  const results: PRReviewResult[] = [];
-  for (let index = 0; index < packed.chunks.length; index += 1) {
-    const chunk = packed.chunks[index];
-    if (chunk === undefined) {
-      throw new ValidationError('Review chunk was missing');
-    }
+  const concurrency = input.concurrency ?? DEFAULT_REVIEW_CONCURRENCY;
+  const results = await mapWithConcurrency(packed.chunks, concurrency, async (chunk, index) => {
     const prompt = buildReviewPrompt(input.agentsText, chunk, index, packed.chunks.length);
     const raw = await input.client.generateCompletion(
       prompt.userPrompt,
       prompt.systemPrompt,
       PR_REVIEW_JSON_SCHEMA,
     );
-    results.push(parsePRReviewResult(raw));
-  }
+    return parsePRReviewResult(raw);
+  });
 
   return {
     ...aggregateReviewResults(results),
@@ -66,9 +64,11 @@ export function aggregateReviewResults(results: readonly PRReviewResult[]): PRRe
   return {
     approved: results.every((result) => result.approved),
     score: Math.min(...results.map((result) => result.score)),
-    summary: results.map((result, index) => (
-      results.length === 1 ? result.summary : `Chunk ${index + 1}: ${result.summary}`
-    )).join(' '),
+    summary: results
+      .map((result, index) =>
+        results.length === 1 ? result.summary : `Chunk ${index + 1}: ${result.summary}`,
+      )
+      .join(' '),
     ruleViolations: results.flatMap((result) => result.ruleViolations),
     suggestions: results.flatMap((result) => result.suggestions),
   };

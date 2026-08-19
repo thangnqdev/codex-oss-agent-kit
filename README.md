@@ -18,7 +18,7 @@ The [OpenAI Codex for Open Source](https://developers.openai.com/community/codex
 2. **Triage an issue** by classifying category/complexity and recommending labels.
 3. **Audit a source file or unified diff** with static secret/unsafe-pattern checks (`sk-`, `sk-proj-`, `sk-svcacct-`, `ghp_`, `github_pat_`, `eval(`). Unified diffs are scanned on **added (`+`) lines only**. This is a regex scanner, not an OWASP engine or dependency CVE audit.
 
-Live review/triage calls use a request timeout, bounded retries on 429/5xx, and structured outputs. Invalid or empty model JSON fails closed (does not auto-approve). Diffs larger than `maxDiffLines` are chunked so every line is reviewed, or the run fail-closes if a single hunk cannot fit. Diff text is treated as **untrusted data**.
+Live review/triage calls use a request timeout, bounded retries on 429/5xx, and structured outputs. Invalid or empty model JSON fails closed (does not auto-approve). Diffs larger than `maxDiffLines` are chunked so every line is reviewed, or the run fail-closes if a single hunk cannot fit. Chunks are reviewed with bounded concurrency (default 4 in flight) to keep large PRs fast without unbounded API fan-out. Diff text is treated as **untrusted data**.
 
 `--mock` is for local development only. CI and the drop-in Action never mock-approve when the API key is missing; they print `AI review: SKIPPED`.
 
@@ -28,9 +28,9 @@ Live review/triage calls use a request timeout, bounded retries on 429/5xx, and 
 
 - **Responses API client**: `gpt-5.6` by default (override via `.codex/config.json` `reviewSettings.model` or `--model`) with timeout, retry, and a JSON schema on the request.
 - **Full `AGENTS.md`**: The reviewer receives the entire file, including numbered quality-gate lines and prose rules.
-- **Config that is actually applied**: `.codex/config.json` is deep-merged; `model`, `maxDiffLines`, and `securityAuditOnPR` change runtime behavior.
+- **Config that is actually applied**: `.codex/config.json` is deep-merged; `model`, `maxDiffLines`, and `securityAuditOnPR` change runtime behavior. The config schema only contains keys that affect behavior.
 - **Drop-in GitHub Action**: `uses: thangnqdev/codex-oss-agent-kit@main` with inputs `openai-api-key`, `model`, `agents-file`, `max-diff-size` and outputs `approved`, `score`, `findings`.
-- **Type-safe core**: TypeScript strict mode. Tests run with Vitest and enforce 80% line/statement/branch/function coverage.
+- **Type-safe core**: TypeScript strict mode with `noUncheckedIndexedAccess`. Tests run with Vitest and enforce 80% line/statement/branch/function coverage **per file**. ESLint (type-aware) and Prettier are enforced in CI.
 
 ---
 
@@ -145,13 +145,13 @@ The library entry (`src/index.ts`) exports core + types only. The CLI is the `co
 
 This is a **self-imposed readiness checklist** for running Codex-style maintainer workflows in this repo. It is **not** an official OpenAI “Codex for OSS compliance” standard.
 
-| Check | Status | Details |
-|---|---|---|
-| **OSI approved license** | MIT License | Redistributable open source |
-| **Agent instructions** | `AGENTS.md` | Full file is sent to the reviewer |
-| **Automated workflows** | GitHub Actions | CI, drop-in PR review Action, security scan over `src/**` |
-| **Community docs** | Present | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` |
-| **Quality & coverage** | Vitest | 80% coverage floor enforced in `npm test` |
+| Check                    | Status                     | Details                                                                                                             |
+| ------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **OSI approved license** | MIT License                | Redistributable open source                                                                                         |
+| **Agent instructions**   | `AGENTS.md`                | Full file is sent to the reviewer                                                                                   |
+| **Automated workflows**  | GitHub Actions             | CI, drop-in PR review Action, security scan over `src/**`                                                           |
+| **Community docs**       | Present                    | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`                                                              |
+| **Quality & coverage**   | Vitest + ESLint + Prettier | 80% per-file coverage floor, type-aware lint, and format checks in `npm test`/`npm run lint`/`npm run format:check` |
 
 ---
 

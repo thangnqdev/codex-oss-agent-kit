@@ -10,7 +10,13 @@ export function isUnifiedDiff(content: string): boolean {
 }
 
 export function classifyUnifiedDiffLine(line: string): DiffLineKind {
-  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('@@')) {
+  if (
+    line.startsWith('+++ ') ||
+    line.startsWith('--- ') ||
+    line.startsWith('diff ') ||
+    line.startsWith('index ') ||
+    line.startsWith('@@')
+  ) {
     return 'header';
   }
   if (line.startsWith('+')) {

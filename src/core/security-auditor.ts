@@ -11,12 +11,42 @@ interface SecretPattern {
 
 export class SecurityAuditor {
   private static readonly SECRET_PATTERNS: readonly SecretPattern[] = [
-    { ruleId: 'SEC001', name: 'OpenAI project API key', pattern: /sk-proj-[A-Za-z0-9_-]+/, severity: 'critical' },
-    { ruleId: 'SEC002', name: 'OpenAI service-account API key', pattern: /sk-svcacct-[A-Za-z0-9_-]+/, severity: 'critical' },
-    { ruleId: 'SEC003', name: 'OpenAI API key', pattern: /sk-[A-Za-z0-9]{32,}/, severity: 'critical' },
-    { ruleId: 'SEC004', name: 'GitHub fine-grained personal access token', pattern: /github_pat_[A-Za-z0-9_]+/, severity: 'critical' },
-    { ruleId: 'SEC005', name: 'GitHub personal access token', pattern: /ghp_[A-Za-z0-9]{36}/, severity: 'critical' },
-    { ruleId: 'SEC006', name: 'Generic secret variable', pattern: /const\s+SECRET\s*=\s*['"][^'"]+['"]/i, severity: 'high' },
+    {
+      ruleId: 'SEC001',
+      name: 'OpenAI project API key',
+      pattern: /sk-proj-[A-Za-z0-9_-]+/,
+      severity: 'critical',
+    },
+    {
+      ruleId: 'SEC002',
+      name: 'OpenAI service-account API key',
+      pattern: /sk-svcacct-[A-Za-z0-9_-]+/,
+      severity: 'critical',
+    },
+    {
+      ruleId: 'SEC003',
+      name: 'OpenAI API key',
+      pattern: /sk-[A-Za-z0-9]{32,}/,
+      severity: 'critical',
+    },
+    {
+      ruleId: 'SEC004',
+      name: 'GitHub fine-grained personal access token',
+      pattern: /github_pat_[A-Za-z0-9_]+/,
+      severity: 'critical',
+    },
+    {
+      ruleId: 'SEC005',
+      name: 'GitHub personal access token',
+      pattern: /ghp_[A-Za-z0-9]{36}/,
+      severity: 'critical',
+    },
+    {
+      ruleId: 'SEC006',
+      name: 'Generic secret variable',
+      pattern: /const\s+SECRET\s*=\s*['"][^'"]+['"]/i,
+      severity: 'high',
+    },
     { ruleId: 'SEC007', name: 'Eval code execution', pattern: /eval\s*\(/, severity: 'medium' },
   ];
 
@@ -35,7 +65,9 @@ export class SecurityAuditor {
       }
     }
 
-    const blocking = findings.filter((finding) => finding.severity === 'critical' || finding.severity === 'high');
+    const blocking = findings.filter(
+      (finding) => finding.severity === 'critical' || finding.severity === 'high',
+    );
     const riskScore = Math.min(findings.length * 25, 100);
 
     return {

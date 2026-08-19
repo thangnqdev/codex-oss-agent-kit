@@ -36,7 +36,9 @@ export function parseIssueTriageResult(raw: string): IssueTriageResult {
   const obj = parseJsonObject(raw, 'Issue triage');
 
   if (!isOneOf(obj.category, ISSUE_CATEGORIES)) {
-    throw new ValidationError('Issue triage: category must be bug, feature, documentation, or question');
+    throw new ValidationError(
+      'Issue triage: category must be bug, feature, documentation, or question',
+    );
   }
   if (!isOneOf(obj.complexity, ISSUE_COMPLEXITIES)) {
     throw new ValidationError('Issue triage: complexity must be low, medium, or high');

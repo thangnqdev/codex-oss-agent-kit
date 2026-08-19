@@ -75,7 +75,7 @@ export class CodexClient {
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       if (attempt > 0) {
-        await delay(this.retryBackoffMs * (2 ** (attempt - 1)));
+        await delay(this.retryBackoffMs * 2 ** (attempt - 1));
       }
 
       try {
@@ -166,7 +166,8 @@ export class CodexClient {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new CodexApiError(`Codex API request timed out after ${this.timeoutMs}ms`);
       }
-      const message = error instanceof Error ? error.message : 'Unknown error during Codex API call';
+      const message =
+        error instanceof Error ? error.message : 'Unknown error during Codex API call';
       throw new CodexApiError(`Codex API call failed: ${message}`);
     } finally {
       if (timeoutHandle !== undefined) {
@@ -183,7 +184,11 @@ export class CodexClient {
   private generateMockResponse(prompt: string, _systemPrompt?: string): string {
     const normalized = prompt.toLowerCase();
 
-    if (normalized.includes('review') || normalized.includes('diff') || normalized.includes('untrusted')) {
+    if (
+      normalized.includes('review') ||
+      normalized.includes('diff') ||
+      normalized.includes('untrusted')
+    ) {
       return JSON.stringify({
         approved: true,
         score: 95,

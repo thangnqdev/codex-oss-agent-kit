@@ -1,6 +1,7 @@
 import { Command, CommanderError } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'node:url';
 import { AgentsParser } from '../core/agents-parser.js';
 import { CodexClient } from '../core/codex-client.js';
 import { CodexApiError, SecurityAuditError, ValidationError } from '../core/errors.js';
@@ -16,14 +17,14 @@ export interface CliIo {
   readonly cwd: string;
 }
 
-interface GlobalCliOptions {
+type GlobalCliOptions = {
   readonly mock?: boolean;
   readonly apiKey?: string;
   readonly config?: string;
   readonly model?: string;
   readonly maxDiffLines?: string;
   readonly format?: string;
-}
+};
 
 interface ReviewCliOptions {
   readonly diff?: string;
@@ -52,9 +53,14 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
 
   program
     .name('codex-oss')
-    .description('Open-source maintainer toolkit: review, triage, and static audit using the OpenAI Responses API.')
-    .version('1.0.0')
-    .option('--mock', 'Use mock completions without calling the OpenAI API (local only, not a CI quality gate)')
+    .description(
+      'Open-source maintainer toolkit: review, triage, and static audit using the OpenAI Responses API.',
+    )
+    .version(readPackageVersion())
+    .option(
+      '--mock',
+      'Use mock completions without calling the OpenAI API (local only, not a CI quality gate)',
+    )
     .option('--api-key <key>', 'OpenAI API key (overrides OPENAI_API_KEY)')
     .option('--config <path>', 'Path to .codex/config.json', '.codex/config.json')
     .option('--model <id>', 'Override reviewSettings.model')
@@ -63,16 +69,20 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
 
   program
     .command('review')
-    .description('Review a pull request diff against AGENTS.md (AI signal plus deterministic gates)')
+    .description(
+      'Review a pull request diff against AGENTS.md (AI signal plus deterministic gates)',
+    )
     .option('-d, --diff <path>', 'Path to diff file')
     .option('-a, --agents <path>', 'Path to AGENTS.md file', 'AGENTS.md')
     .action(async (options: ReviewCliOptions, command: Command) => {
-      const globals = command.optsWithGlobals() as GlobalCliOptions;
+      const globals = command.optsWithGlobals<GlobalCliOptions>();
       const config = applyCliOverrides(loadConfig(io, globals.config), globals);
       const diffPath = requireOption(options.diff, 'Missing required --diff <path>');
       const diffContent = readRequiredFile(resolvePath(io.cwd, diffPath), 'Diff file');
       const client = createClient(io, globals, config);
-      const agentsText = AgentsParser.loadAgentsText(resolvePath(io.cwd, options.agents ?? 'AGENTS.md'));
+      const agentsText = AgentsParser.loadAgentsText(
+        resolvePath(io.cwd, options.agents ?? 'AGENTS.md'),
+      );
       const result = await runReview({
         diffContent,
         agentsText,
@@ -99,7 +109,10 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
         writeln(io.stdout, `Approved: ${result.approved ? 'YES' : 'NO'}`);
         writeln(io.stdout, `Quality Score: ${result.score}/100`);
         writeln(io.stdout, `Summary: ${result.summary}`);
-        writeln(io.stdout, 'Note: AI verdict is a signal; deterministic audit/size/key gates still apply.');
+        writeln(
+          io.stdout,
+          'Note: AI verdict is a signal; deterministic audit/size/key gates still apply.',
+        );
         if (result.ruleViolations.length > 0) {
           writeln(io.stdout, `Rule Violations: ${result.ruleViolations.join(', ')}`);
         }
@@ -114,12 +127,17 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
         if (globals.format !== 'json') {
           writeln(io.stdout, `Security Audit Passed: ${audit.passed ? 'YES' : 'NO'}`);
           for (const finding of audit.findings) {
-            writeln(io.stdout, `- [${finding.severity.toUpperCase()}] ${finding.ruleId}: ${finding.description}`);
+            writeln(
+              io.stdout,
+              `- [${finding.severity.toUpperCase()}] ${finding.ruleId}: ${finding.description}`,
+            );
           }
         }
         if (!audit.passed) {
           exitCode = 1;
-          throw new SecurityAuditError(`Security audit failed with ${audit.findings.length} finding(s)`);
+          throw new SecurityAuditError(
+            `Security audit failed with ${audit.findings.length} finding(s)`,
+          );
         }
       }
 
@@ -134,11 +152,19 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
     .option('-t, --title <title>', 'Issue title', 'Bug report')
     .option('-b, --body <body>', 'Issue body content', 'Issue details')
     .action(async (options: TriageCliOptions, command: Command) => {
-      const globals = command.optsWithGlobals() as GlobalCliOptions;
+      const globals = command.optsWithGlobals<GlobalCliOptions>();
       const config = applyCliOverrides(loadConfig(io, globals.config), globals);
       const client = createClient(io, globals, config);
       const triager = new IssueTriager(client);
-      const result = await triager.triageIssue(options.title ?? 'Bug report', options.body ?? 'Issue details');
+      const result = await triager.triageIssue(
+        options.title ?? 'Bug report',
+        options.body ?? 'Issue details',
+      );
+
+      if (globals.format === 'json') {
+        writeln(io.stdout, JSON.stringify(result));
+        return;
+      }
 
       writeln(io.stdout, '=== Codex OSS Issue Triage ===');
       writeln(io.stdout, `Category: ${result.category}`);
@@ -151,23 +177,33 @@ export function createProgram(io: CliIo = DEFAULT_IO): Command {
     .command('audit')
     .description('Perform static security audit on source file or unified diff')
     .option('-f, --file <path>', 'Path to file to audit')
-    .action((options: AuditCliOptions) => {
+    .action((options: AuditCliOptions, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalCliOptions>();
       const filePath = requireOption(options.file, 'Missing required --file <path>');
       const content = readRequiredFile(resolvePath(io.cwd, filePath), 'Audit file');
       const auditor = new SecurityAuditor();
       const result = auditor.auditContent(content, filePath);
 
-      writeln(io.stdout, '=== Codex OSS Security Audit ===');
-      writeln(io.stdout, `Audit Passed: ${result.passed ? 'YES' : 'NO'}`);
-      writeln(io.stdout, `Risk Score: ${result.riskScore}/100`);
-      writeln(io.stdout, `Findings Count: ${result.findings.length}`);
-      for (const finding of result.findings) {
-        writeln(io.stdout, `- [${finding.severity.toUpperCase()}] ${finding.ruleId}: ${finding.description}`);
+      if (globals.format === 'json') {
+        writeln(io.stdout, JSON.stringify(result));
+      } else {
+        writeln(io.stdout, '=== Codex OSS Security Audit ===');
+        writeln(io.stdout, `Audit Passed: ${result.passed ? 'YES' : 'NO'}`);
+        writeln(io.stdout, `Risk Score: ${result.riskScore}/100`);
+        writeln(io.stdout, `Findings Count: ${result.findings.length}`);
+        for (const finding of result.findings) {
+          writeln(
+            io.stdout,
+            `- [${finding.severity.toUpperCase()}] ${finding.ruleId}: ${finding.description}`,
+          );
+        }
       }
 
       if (!result.passed) {
         exitCode = 1;
-        throw new SecurityAuditError(`Security audit failed with ${result.findings.length} finding(s)`);
+        throw new SecurityAuditError(
+          `Security audit failed with ${result.findings.length} finding(s)`,
+        );
       }
     });
 
@@ -199,7 +235,11 @@ export async function runCli(argv: string[], ioOverrides: Partial<CliIo> = {}): 
     const withExit = program as Command & { getExitCode?: () => number };
     return withExit.getExitCode?.() ?? 0;
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof CodexApiError || error instanceof SecurityAuditError) {
+    if (
+      error instanceof ValidationError ||
+      error instanceof CodexApiError ||
+      error instanceof SecurityAuditError
+    ) {
       io.stderr.write(`${error.name}: ${error.message}\n`);
       return 1;
     }
@@ -222,7 +262,9 @@ function createClient(io: CliIo, globals: GlobalCliOptions, config: CodexConfig)
     });
   }
   if (!apiKey) {
-    throw new ValidationError('Live mode requires OPENAI_API_KEY or --api-key. Pass --mock to run without a key.');
+    throw new ValidationError(
+      'Live mode requires OPENAI_API_KEY or --api-key. Pass --mock to run without a key.',
+    );
   }
   return new CodexClient({
     mockMode: false,
@@ -276,6 +318,23 @@ function readRequiredFile(filePath: string, label: string): string {
 
 function resolvePath(cwd: string, target: string): string {
   return path.isAbsolute(target) ? target : path.resolve(cwd, target);
+}
+
+function readPackageVersion(): string {
+  try {
+    const packagePath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../package.json',
+    );
+    const raw = fs.readFileSync(packagePath, 'utf-8');
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    if (typeof parsed.version === 'string' && parsed.version.trim() !== '') {
+      return parsed.version;
+    }
+  } catch {
+    // Fall through to the fallback version below.
+  }
+  return '0.0.0';
 }
 
 function writeln(stream: NodeJS.WritableStream, line: string): void {

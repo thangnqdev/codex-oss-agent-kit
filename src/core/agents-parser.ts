@@ -3,7 +3,8 @@ import { CodexConfig } from '../types/index.js';
 import { deepMergeConfig, getDefaultConfig } from './config.js';
 import { ValidationError } from './errors.js';
 
-const DEFAULT_AGENTS_TEXT = 'Default AGENTS.md rules: Enforce strict mode, 80% coverage floor, clean architecture.';
+const DEFAULT_AGENTS_TEXT =
+  'Default AGENTS.md rules: Enforce strict mode, 80% coverage floor, clean architecture.';
 
 export class AgentsParser {
   public static loadAgentsText(filePath: string): string {
@@ -40,6 +41,6 @@ export class AgentsParser {
       throw new ValidationError(`Config file must contain a JSON object: ${configPath}`);
     }
 
-    return deepMergeConfig(getDefaultConfig(), parsed as Partial<CodexConfig>);
+    return deepMergeConfig(getDefaultConfig(), parsed);
   }
 }

@@ -4,6 +4,7 @@ export * from './core/config.js';
 export * from './core/result-schemas.js';
 export * from './core/review-request.js';
 export * from './core/diff-lines.js';
+export * from './core/concurrency.js';
 export * from './core/review-chunks.js';
 export * from './core/review-prompt.js';
 export * from './core/review-run.js';

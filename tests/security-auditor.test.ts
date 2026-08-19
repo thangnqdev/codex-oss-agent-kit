@@ -62,7 +62,9 @@ describe('SecurityAuditor', () => {
 
   it('throws SecurityAuditError from auditOrThrow when the audit fails', () => {
     const auditor = new SecurityAuditor();
-    expect(() => auditor.auditOrThrow('sk-proj-abcdefghijklmnopqrstuvwxyz')).toThrow(SecurityAuditError);
+    expect(() => auditor.auditOrThrow('sk-proj-abcdefghijklmnopqrstuvwxyz')).toThrow(
+      SecurityAuditError,
+    );
   });
 
   it('returns the result from auditOrThrow when the audit passes', () => {

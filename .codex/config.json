@@ -2,14 +2,10 @@
   "version": "1.0.0",
   "program": "Codex for Open Source",
   "rules": {
-    "enforceStrictTypes": true,
-    "requireCoverageFloor": 80,
-    "securityAuditOnPR": true,
-    "autoTriageIssues": true
+    "securityAuditOnPR": true
   },
   "reviewSettings": {
     "model": "gpt-5.6",
-    "maxDiffLines": 1000,
-    "commentOnPass": false
+    "maxDiffLines": 1000
   }
 }

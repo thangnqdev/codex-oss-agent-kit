@@ -20,6 +20,10 @@
     "build": "tsc",
     "type-check": "tsc --noEmit",
     "test": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"*.js\" \"*.json\" \"*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"*.js\" \"*.json\" \"*.md\"",
     "start": "node bin/codex-oss.js",
     "prepare": "node scripts/build-if-present.js",
     "prepublishOnly": "npm run build"
@@ -41,9 +45,14 @@
     "commander": "^12.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.14.9",
     "@vitest/coverage-v8": "^1.6.0",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
     "typescript": "^5.5.2",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^1.6.0"
   },
   "engines": {

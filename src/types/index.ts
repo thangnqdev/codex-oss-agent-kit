@@ -2,15 +2,11 @@ export interface CodexConfig {
   version: string;
   program: string;
   rules: {
-    enforceStrictTypes: boolean;
-    requireCoverageFloor: number;
     securityAuditOnPR: boolean;
-    autoTriageIssues: boolean;
   };
   reviewSettings: {
     model: string;
     maxDiffLines: number;
-    commentOnPass: boolean;
   };
 }
 
